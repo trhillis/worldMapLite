@@ -29,11 +29,25 @@ def make_nearest_examples(world, n=1000, seed=0):
 
     for _ in range(n):
         i = int(rng.integers(len(world.names)))
-        j, d = nearest(world, i)
+        nearest_j, _ = nearest(world, i)
 
+        # positive example
         examples.append({
-            "input": f"nearest {world.names[i]}",
-            "answer": world.names[j],
+            "input": f"nearest {world.names[i]} {world.names[nearest_j]}",
+            "indices": (i, nearest_j),
+            "answer": 1.0,
+            "task": "nearest",
+        })
+
+        # negative example
+        while True:
+            j = int(rng.integers(len(world.names)))
+            if j != nearest_j and j != i:
+                break
+        
+        examples.append({
+            "input": f"nearest {world.names[i]} {world.names[j]}",
+            "answer": 0.0,
             "indices": (i, j),
             "task": "nearest",
         })

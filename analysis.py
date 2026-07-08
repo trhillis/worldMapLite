@@ -7,10 +7,16 @@ from sklearn.decomposition import PCA
 from worlds import make_grid
 from model import DistanceMLP
 
+config = "nearest"
+# config = "distance"
+
 world = make_grid(10, 10)
 
 model = DistanceMLP(num_points=len(world.names))
-model.load_state_dict(torch.load("models/distance_model.pt"))
+if config == "distance":
+    model.load_state_dict(torch.load("models/distance_model.pt"))
+elif config == "nearest":
+    model.load_state_dict(torch.load("models/nearest_model.pt"))
 
 emb = model.emb.weight.detach().numpy()
 xy = PCA(n_components=2).fit_transform(emb)

@@ -25,3 +25,26 @@ class DistanceMLP(nn.Module):
 
         x = torch.cat([ei, ej], dim=-1)
         return self.net(x).squeeze(-1)
+
+class NearestMLP(nn.Module):
+    # Use Binary classification to predict if a point is the nearest
+    #  neighbor of another point using nn.BCEWithLogitsLoss
+    def __init__(self, num_points):
+        super().__init__()
+
+        self.emb = nn.Embedding(num_points, 32)
+
+        self.net = nn.Sequential(
+            nn.Linear(32 * 2, 128),
+            nn.ReLU(),
+            nn.Linear(128, 128),
+            nn.ReLU(),
+            nn.Linear(128, 1),
+        )
+
+    def forward(self, i, j):
+        ei = self.emb(i)
+        ej = self.emb(j)
+
+        x = torch.cat([ei, ej], dim=-1)
+        return self.net(x).squeeze(-1)
