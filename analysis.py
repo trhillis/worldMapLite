@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 from torch_cka import CKA
 import numpy as np
+from skdim.id import TwoNN
 
 from worlds import make_grid
 from model import DistanceMLP, NearestMLP
@@ -109,3 +110,11 @@ plt.figure()
 plt.scatter(true[:, 0], true[:, 1])
 plt.title("True grid coordinates")
 plt.show()
+
+estimator = TwoNN()
+id_emb = estimator.fit(emb).dimension_
+id_h1 = estimator.fit(h1).dimension_
+id_h2 = estimator.fit(h2).dimension_
+
+print("Intrinsic dimensions:")
+print(id_emb, id_h1, id_h2)
