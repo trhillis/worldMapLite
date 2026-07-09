@@ -10,10 +10,13 @@ from skdim.id import TwoNN
 from worlds import make_grid
 from model import DistanceMLP, NearestMLP
 
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# print(f"Using device: {device}")
+
 config = "nearest"
 # config = "distance"
 
-world = make_grid(10, 10)
+world = make_grid(20, 20)
 num_points = len(world.names)
 
 if config == "distance":
@@ -118,3 +121,14 @@ id_h2 = estimator.fit(h2).dimension_
 
 print("Intrinsic dimensions:")
 print(id_emb, id_h1, id_h2)
+
+layer_names = ["emb", "h1", "h2"]
+ids = [id_emb, id_h1, id_h2]
+
+plt.figure(figsize=(6, 4))
+plt.plot(layer_names, ids, marker='o')
+plt.title("Intrinsic Dimension of Layers")
+plt.xlabel("Layer")
+plt.ylabel("Intrinsic Dimension")
+plt.tight_layout()
+plt.show()
