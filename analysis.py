@@ -16,15 +16,29 @@ from model import DistanceMLP, NearestMLP
 config = "nearest"
 # config = "distance"
 
-world = make_grid(20, 20)
-num_points = len(world.names)
 
 if config == "distance":
+
+    ckpt = torch.load("models/distance_model.pt")
+
+    config = ckpt["config"]
+
+    world = make_grid(ckpt["grid_width"], ckpt["grid_height"])
+
+    num_points = len(world.names)   
+
     model = DistanceMLP(num_points=len(world.names))
-    model.load_state_dict(torch.load("models/distance_model.pt"))
+    model.load_state_dict(ckpt["model_state_dict"])
 elif config == "nearest":
+    ckpt = torch.load("models/nearest_model.pt")
+
+    config = ckpt["config"]
+
+    world = make_grid(ckpt["grid_width"], ckpt["grid_height"])
+
+    num_points = len(world.names)   
     model = NearestMLP(num_points=len(world.names))
-    model.load_state_dict(torch.load("models/nearest_model.pt"))
+    model.load_state_dict(ckpt["model_state_dict"])
 
 model.eval()
 
