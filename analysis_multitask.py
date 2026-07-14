@@ -17,7 +17,7 @@ from sklearn.model_selection import KFold
 from sklearn.linear_model import Ridge
 from sklearn.metrics import r2_score
 
-CHECKPOINT_PATH = "models/nearest_model.pt"
+CHECKPOINT_PATH = "models/distance_nearest_model.pt"
 PAIR_SAMPLE_SIZE = 5000
 SEED = 0
 print(CHECKPOINT_PATH)
