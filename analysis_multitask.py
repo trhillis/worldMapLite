@@ -4,391 +4,223 @@ import matplotlib.pyplot as plt
 
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import Ridge
 from sklearn.metrics import r2_score
+from sklearn.model_selection import KFold
+
 from scipy.stats import spearmanr
 from skdim.id import TwoNN
 
 from worlds import make_grid
 from multitask_model import MultiTaskWorldModel
 
-from sklearn.linear_model import Ridge
 
-from sklearn.model_selection import KFold
-from sklearn.linear_model import Ridge
-from sklearn.metrics import r2_score
+# --------------------------------------------------
+# Configuration
+# --------------------------------------------------
 
-CHECKPOINT_PATH = "models/distance_nearest_model.pt"
+CHECKPOINT_PATH = "models/distance_model.pt"
+
+# Number of unique entity pairs used for transformer
+# representation analysis.
 PAIR_SAMPLE_SIZE = 5000
+
 SEED = 0
-print(CHECKPOINT_PATH)
+
+print(f"Checkpoint: {CHECKPOINT_PATH}")
+
+
+# --------------------------------------------------
+# General analysis utilities
+# --------------------------------------------------
 
 def linear_cka(x, y):
+    """
+    Compute linear centered-kernel alignment between two
+    representation matrices.
+
+    Expected shapes:
+        x: [num_examples, x_dimension]
+        y: [num_examples, y_dimension]
+    """
+
     if isinstance(x, torch.Tensor):
-        x = x.detach().cpu().numpy()
+        x = (
+            x.detach()
+            .cpu()
+            .numpy()
+        )
 
     if isinstance(y, torch.Tensor):
-        y = y.detach().cpu().numpy()
+        y = (
+            y.detach()
+            .cpu()
+            .numpy()
+        )
 
-    x = x - x.mean(axis=0, keepdims=True)
-    y = y - y.mean(axis=0, keepdims=True)
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
 
-    numerator = np.linalg.norm(x.T @ y, ord="fro") ** 2
-    denominator = (
-        np.linalg.norm(x.T @ x, ord="fro")
-        * np.linalg.norm(y.T @ y, ord="fro")
+    if x.ndim != 2:
+        raise ValueError(
+            f"x must have two dimensions, got shape {x.shape}"
+        )
+
+    if y.ndim != 2:
+        raise ValueError(
+            f"y must have two dimensions, got shape {y.shape}"
+        )
+
+    if len(x) != len(y):
+        raise ValueError(
+            "x and y must contain the same number of examples"
+        )
+
+    # Center every representation dimension.
+    x = x - x.mean(
+        axis=0,
+        keepdims=True,
     )
 
-    return float(numerator / (denominator + 1e-12))
+    y = y - y.mean(
+        axis=0,
+        keepdims=True,
+    )
+
+    numerator = (
+        np.linalg.norm(
+            x.T @ y,
+            ord="fro",
+        )
+        ** 2
+    )
+
+    denominator = (
+        np.linalg.norm(
+            x.T @ x,
+            ord="fro",
+        )
+        * np.linalg.norm(
+            y.T @ y,
+            ord="fro",
+        )
+    )
+
+    # A constant representation has zero centered norm.
+    if denominator <= 1e-12:
+        return float("nan")
+
+    return float(
+        numerator / denominator
+    )
 
 
-def sample_unique_pairs(num_points, n_pairs, seed=0):
+def sample_unique_pairs(
+    num_points,
+    n_pairs,
+    seed=0,
+):
+    """
+    Sample unique unordered pairs of point indices.
+
+    Every pair satisfies:
+        i < j
+    """
+
     rng = np.random.default_rng(seed)
 
-    all_pairs = np.array([
-        (i, j)
-        for i in range(num_points)
-        for j in range(i + 1, num_points)
-    ])
+    all_pairs = np.array(
+        [
+            (i, j)
+            for i in range(num_points)
+            for j in range(i + 1, num_points)
+        ],
+        dtype=np.int64,
+    )
 
-    n_pairs = min(n_pairs, len(all_pairs))
+    n_pairs = min(
+        n_pairs,
+        len(all_pairs),
+    )
 
-    selected = rng.choice(
+    selected_indices = rng.choice(
         len(all_pairs),
         size=n_pairs,
         replace=False,
     )
 
-    return all_pairs[selected]
-
-
-def get_head_activations(model, point_i, point_j, task):
-    with torch.no_grad():
-        pair = model.pair_representation(point_i, point_j)
-
-        if task == "distance":
-            net = model.distance_head.net
-        elif task == "nearest":
-            net = model.nearest_head.net
-        else:
-            raise ValueError(f"Unknown task: {task}")
-
-        h1 = net[1](net[0](pair))
-        h2 = net[3](net[2](h1))
-        output = net[4](h2)
-
-    return {
-        "pair": pair,
-        "h1": h1,
-        "h2": h2,
-        "output": output,
-    }
+    return all_pairs[selected_indices]
 
 
 def pairwise_distances(x):
-    difference = x[:, None, :] - x[None, :, :]
-    return np.linalg.norm(difference, axis=-1)
+    """
+    Compute the full Euclidean distance matrix.
+
+    Input:
+        [num_points, dimensions]
+
+    Output:
+        [num_points, num_points]
+    """
+
+    x = np.asarray(
+        x,
+        dtype=np.float64,
+    )
+
+    differences = (
+        x[:, None, :]
+        - x[None, :, :]
+    )
+
+    return np.linalg.norm(
+        differences,
+        axis=-1,
+    )
 
 
 def upper_triangle_values(matrix):
-    indices = np.triu_indices_from(matrix, k=1)
+    """
+    Return all entries above the diagonal.
+    """
+
+    indices = np.triu_indices_from(
+        matrix,
+        k=1,
+    )
+
     return matrix[indices]
 
 
-def linear_coordinate_probe(embeddings, coordinates):
+def linear_coordinate_probe(
+    embeddings,
+    coordinates,
+):
+    """
+    Fit a linear model from learned embeddings to true coordinates.
+
+    This score is measured on the same data used to train the probe.
+    Use the cross-validated probe below for a stronger estimate.
+    """
+
     probe = LinearRegression()
-    probe.fit(embeddings, coordinates)
 
-    prediction = probe.predict(embeddings)
+    probe.fit(
+        embeddings,
+        coordinates,
+    )
 
-    return prediction, r2_score(
+    prediction = probe.predict(
+        embeddings
+    )
+
+    score = r2_score(
         coordinates,
         prediction,
         multioutput="variance_weighted",
     )
 
-
-def nearest_neighbor_recall(embeddings, coordinates):
-    latent_distances = pairwise_distances(embeddings)
-
-    # Manhattan distance is the grid's natural distance.
-    true_distances = np.abs(
-        coordinates[:, None, :] - coordinates[None, :, :]
-    ).sum(axis=-1)
-
-    np.fill_diagonal(latent_distances, np.inf)
-    np.fill_diagonal(true_distances, np.inf)
-
-    recovered = []
-
-    for i in range(len(embeddings)):
-        true_min = true_distances[i].min()
-        true_neighbors = set(
-            np.flatnonzero(true_distances[i] == true_min)
-        )
-
-        predicted_neighbor = int(
-            np.argmin(latent_distances[i])
-        )
-
-        recovered.append(
-            predicted_neighbor in true_neighbors
-        )
-
-    return float(np.mean(recovered))
-
-
-def estimate_intrinsic_dimension(x):
-    x = np.asarray(x)
-
-    # TwoNN requires enough distinct samples and can fail on
-    # degenerate or duplicate-heavy representations.
-    if len(x) < 10:
-        return float("nan")
-
-    return float(TwoNN().fit(x).dimension_)
-
-
-checkpoint = torch.load(
-    CHECKPOINT_PATH,
-    map_location="cpu",
-)
-
-cfg = checkpoint["config"]
-
-tasks = cfg.get("tasks", ("distance", "nearest"))
-
-if isinstance(tasks, str):
-    tasks = (tasks,)
-else:
-    tasks = tuple(tasks)
-
-world = make_grid(
-    cfg["width"],
-    cfg["height"],
-)
-
-model = MultiTaskWorldModel(
-    num_points=len(world.names),
-    emb_dim=cfg["emb_dim"],
-    hidden_dim=cfg["hidden_dim"],
-)
-
-model.load_state_dict(checkpoint["model_state_dict"])
-model.eval()
-
-num_points = len(world.names)
-true_coordinates = world.coordinates.astype(np.float64)
-
-embeddings = (
-    model.emb.weight
-    .detach()
-    .cpu()
-    .numpy()
-)
-
-# --------------------------------------------------
-# Entity embedding analysis
-# --------------------------------------------------
-
-pca = PCA(n_components=2)
-embedding_pca = pca.fit_transform(embeddings)
-
-linear_prediction, coordinate_r2 = (
-    linear_coordinate_probe(
-        embeddings,
-        true_coordinates,
-    )
-)
-
-latent_distance_matrix = pairwise_distances(embeddings)
-
-true_manhattan_matrix = np.abs(
-    true_coordinates[:, None, :]
-    - true_coordinates[None, :, :]
-).sum(axis=-1)
-
-distance_correlation = spearmanr(
-    upper_triangle_values(latent_distance_matrix),
-    upper_triangle_values(true_manhattan_matrix),
-).statistic
-
-neighbor_recall = nearest_neighbor_recall(
-    embeddings,
-    true_coordinates,
-)
-
-embedding_id = estimate_intrinsic_dimension(
-    embeddings
-)
-
-print("Entity embedding metrics")
-print(f"PCA explained variance: {pca.explained_variance_ratio_.sum():.4f}")
-print(f"Linear coordinate probe R²: {coordinate_r2:.4f}")
-print(f"Distance Spearman correlation: {distance_correlation:.4f}")
-print(f"Nearest-neighbor recall: {neighbor_recall:.4f}")
-print(f"Embedding intrinsic dimension: {embedding_id:.4f}")
-
-# PCA plot
-plt.figure(figsize=(8, 6))
-plt.scatter(
-    embedding_pca[:, 0],
-    embedding_pca[:, 1],
-    s=15,
-)
-
-plt.title("PCA of shared entity embeddings")
-plt.xlabel("PC1")
-plt.ylabel("PC2")
-plt.tight_layout()
-plt.show()
-
-# Linear probe reconstruction
-plt.figure(figsize=(8, 6))
-plt.scatter(
-    linear_prediction[:, 0],
-    linear_prediction[:, 1],
-    s=15,
-)
-
-plt.title(
-    f"Coordinates reconstructed by linear probe "
-    f"(R²={coordinate_r2:.3f})"
-)
-plt.xlabel("Predicted x")
-plt.ylabel("Predicted y")
-plt.axis("equal")
-plt.tight_layout()
-plt.show()
-
-# True coordinates
-plt.figure(figsize=(8, 6))
-plt.scatter(
-    true_coordinates[:, 0],
-    true_coordinates[:, 1],
-    s=15,
-)
-
-plt.title("True grid coordinates")
-plt.xlabel("x")
-plt.ylabel("y")
-plt.axis("equal")
-plt.tight_layout()
-plt.show()
-
-# --------------------------------------------------
-# Pair representation analysis
-# --------------------------------------------------
-
-pairs = sample_unique_pairs(
-    num_points,
-    PAIR_SAMPLE_SIZE,
-    seed=SEED,
-)
-
-point_i = torch.tensor(
-    pairs[:, 0],
-    dtype=torch.long,
-)
-
-point_j = torch.tensor(
-    pairs[:, 1],
-    dtype=torch.long,
-)
-
-task_layers = {}
-
-for task in tasks:
-    task_layers[task] = get_head_activations(
-        model,
-        point_i,
-        point_j,
-        task=task,
-    )
-
-for task_name, layers in task_layers.items():
-    layer_names = ["pair", "h1", "h2"]
-    cka_matrix = np.zeros(
-        (len(layer_names), len(layer_names))
-    )
-
-    for row, name_a in enumerate(layer_names):
-        for column, name_b in enumerate(layer_names):
-            cka_matrix[row, column] = linear_cka(
-                layers[name_a],
-                layers[name_b],
-            )
-
-    print(f"\n{task_name.capitalize()} head CKA")
-    print(cka_matrix)
-
-    plt.figure(figsize=(6, 5))
-    plt.imshow(
-        cka_matrix,
-        cmap="viridis",
-        interpolation="nearest",
-        vmin=0.0,
-        vmax=1.0,
-    )
-    plt.xticks(
-        range(len(layer_names)),
-        layer_names,
-    )
-    plt.yticks(
-        range(len(layer_names)),
-        layer_names,
-    )
-    plt.colorbar(label="Linear CKA")
-    plt.title(f"{task_name.capitalize()} head layer CKA")
-    plt.tight_layout()
-    plt.show()
-
-    intrinsic_dimensions = [
-        estimate_intrinsic_dimension(
-            layers[name].detach().cpu().numpy()
-        )
-        for name in layer_names
-    ]
-
-    print(
-        f"{task_name.capitalize()} pair-layer "
-        f"intrinsic dimensions:"
-    )
-
-    for name, dimension in zip(
-        layer_names,
-        intrinsic_dimensions,
-    ):
-        print(f"  {name}: {dimension:.4f}")
-
-    plt.figure(figsize=(6, 4))
-    plt.plot(
-        layer_names,
-        intrinsic_dimensions,
-        marker="o",
-    )
-    plt.title(
-        f"{task_name.capitalize()} head "
-        f"intrinsic dimension"
-    )
-    plt.xlabel("Layer")
-    plt.ylabel("Estimated intrinsic dimension")
-    plt.tight_layout()
-    plt.show()
-
-# --------------------------------------------------
-# Cross-task representation similarity
-# --------------------------------------------------
-
-if "distance" in task_layers and "nearest" in task_layers:
-    print("\nCross-task CKA")
-
-    for layer_name in ["h1", "h2"]:
-        similarity = linear_cka(
-            task_layers["distance"][layer_name],
-            task_layers["nearest"][layer_name],
-        )
-
-        print(f"{layer_name}: {similarity:.4f}")
+    return prediction, float(score)
 
 
 def cross_validated_coordinate_probe(
@@ -397,6 +229,13 @@ def cross_validated_coordinate_probe(
     n_splits=5,
     seed=0,
 ):
+    """
+    Evaluate coordinate recovery with cross-validated Ridge regression.
+    """
+
+    embeddings = np.asarray(embeddings)
+    coordinates = np.asarray(coordinates)
+
     splitter = KFold(
         n_splits=n_splits,
         shuffle=True,
@@ -405,8 +244,12 @@ def cross_validated_coordinate_probe(
 
     scores = []
 
-    for train_indices, test_indices in splitter.split(embeddings):
-        probe = Ridge(alpha=1.0)
+    for train_indices, test_indices in splitter.split(
+        embeddings
+    ):
+        probe = Ridge(
+            alpha=1.0
+        )
 
         probe.fit(
             embeddings[train_indices],
@@ -425,14 +268,1015 @@ def cross_validated_coordinate_probe(
 
         scores.append(score)
 
-    return float(np.mean(scores)), float(np.std(scores))
+    return (
+        float(np.mean(scores)),
+        float(np.std(scores)),
+    )
 
-cv_r2_mean, cv_r2_std = cross_validated_coordinate_probe(
+
+def nearest_neighbor_recall(
     embeddings,
-    true_coordinates,
+    coordinates,
+):
+    """
+    Measure whether the nearest entity in learned embedding space
+    is one of the true nearest entities in coordinate space.
+
+    Both distances are Euclidean.
+    """
+
+    latent_distances = pairwise_distances(
+        embeddings
+    )
+
+    true_distances = pairwise_distances(
+        coordinates
+    )
+
+    # Prevent each point from selecting itself.
+    np.fill_diagonal(
+        latent_distances,
+        np.inf,
+    )
+
+    np.fill_diagonal(
+        true_distances,
+        np.inf,
+    )
+
+    recovered = []
+
+    for point_index in range(
+        len(embeddings)
+    ):
+        minimum_true_distance = (
+            true_distances[point_index].min()
+        )
+
+        true_neighbors = set(
+            np.flatnonzero(
+                np.isclose(
+                    true_distances[point_index],
+                    minimum_true_distance,
+                    atol=1e-8,
+                    rtol=0.0,
+                )
+            )
+        )
+
+        predicted_neighbor = int(
+            np.argmin(
+                latent_distances[point_index]
+            )
+        )
+
+        recovered.append(
+            predicted_neighbor
+            in true_neighbors
+        )
+
+    return float(
+        np.mean(recovered)
+    )
+
+
+def estimate_intrinsic_dimension(x):
+    """
+    Estimate intrinsic dimension using the TwoNN estimator.
+
+    Returns NaN when the representation is too small, constant,
+    duplicate-heavy, or otherwise unsuitable for TwoNN.
+    """
+
+    if isinstance(x, torch.Tensor):
+        x = (
+            x.detach()
+            .cpu()
+            .numpy()
+        )
+
+    x = np.asarray(
+        x,
+        dtype=np.float64,
+    )
+
+    if x.ndim != 2:
+        raise ValueError(
+            "Intrinsic-dimension input must have shape "
+            "[num_examples, dimensions]"
+        )
+
+    if len(x) < 10:
+        return float("nan")
+
+    # Remove nonfinite rows.
+    finite_mask = np.all(
+        np.isfinite(x),
+        axis=1,
+    )
+
+    x = x[finite_mask]
+
+    if len(x) < 10:
+        return float("nan")
+
+    # TwoNN can fail when all observations are identical.
+    if np.allclose(
+        x,
+        x[0],
+    ):
+        return float("nan")
+
+    try:
+        estimator = TwoNN()
+        estimator.fit(x)
+
+        return float(
+            estimator.dimension_
+        )
+
+    except Exception as error:
+        print(
+            "Intrinsic-dimension estimation failed: "
+            f"{error}"
+        )
+
+        return float("nan")
+
+
+# --------------------------------------------------
+# Transformer activation extraction
+# --------------------------------------------------
+
+def get_task_components(
+    model,
+    task,
+):
+    """
+    Return the task token and output head for one task.
+    """
+
+    if task == "distance":
+        return (
+            model.distance_token,
+            model.distance_head,
+        )
+
+    if task == "nearest":
+        return (
+            model.nearest_token,
+            model.nearest_head,
+        )
+
+    raise ValueError(
+        f"Unknown task: {task}"
+    )
+
+
+def get_transformer_activations(
+    model,
+    point_i,
+    point_j,
+    task,
+):
+    """
+    Run one batch through the transformer and save intermediate
+    token representations and output-head activations.
+
+    Each transformer sequence is:
+
+        [task token, entity i, entity j]
+    """
+
+    task_token, head = get_task_components(
+        model,
+        task,
+    )
+
+    with torch.inference_mode():
+        # Look up entity embeddings.
+        embedding_i = model.encode(
+            point_i
+        )
+
+        embedding_j = model.encode(
+            point_j
+        )
+
+        batch_size = point_i.shape[0]
+
+        # Expand the learned task token across the batch.
+        expanded_task_token = task_token.expand(
+            batch_size,
+            -1,
+            -1,
+        )
+
+        # Add sequence dimensions to entity embeddings.
+        embedding_i_token = (
+            embedding_i.unsqueeze(1)
+        )
+
+        embedding_j_token = (
+            embedding_j.unsqueeze(1)
+        )
+
+        # Construct:
+        #   [batch_size, 3, emb_dim]
+        tokens = torch.cat(
+            [
+                expanded_task_token,
+                embedding_i_token,
+                embedding_j_token,
+            ],
+            dim=1,
+        )
+
+        activations = {
+            # Complete initial sequence.
+            "input_tokens": tokens,
+
+            # Individual initial tokens.
+            "input_task": tokens[:, 0, :],
+            "input_i": tokens[:, 1, :],
+            "input_j": tokens[:, 2, :],
+        }
+
+        hidden = tokens
+
+        # Run the sequence through each transformer encoder layer
+        # individually so intermediate representations can be saved.
+        for layer_index, layer in enumerate(
+            model.transformer.layers,
+            start=1,
+        ):
+            hidden = layer(hidden)
+
+            activations[
+                f"transformer_{layer_index}_tokens"
+            ] = hidden
+
+            activations[
+                f"transformer_{layer_index}_task"
+            ] = hidden[:, 0, :]
+
+            activations[
+                f"transformer_{layer_index}_i"
+            ] = hidden[:, 1, :]
+
+            activations[
+                f"transformer_{layer_index}_j"
+            ] = hidden[:, 2, :]
+
+            # A flattened representation of the complete three-token
+            # sequence can be used in CKA if desired.
+            activations[
+                f"transformer_{layer_index}_sequence"
+            ] = hidden.flatten(
+                start_dim=1
+            )
+
+        # Apply the encoder's optional final normalization.
+        if model.transformer.norm is not None:
+            hidden = model.transformer.norm(
+                hidden
+            )
+
+        activations[
+            "transformer_final_tokens"
+        ] = hidden
+
+        activations[
+            "transformer_final_sequence"
+        ] = hidden.flatten(
+            start_dim=1
+        )
+
+        # The transformed task token is the pair representation used
+        # by the output head.
+        pair = hidden[:, 0, :]
+
+        activations["pair"] = pair
+
+        # TransformerHead structure:
+        #
+        #   net[0] = LayerNorm
+        #   net[1] = Linear
+        #   net[2] = ReLU
+        #   net[3] = Linear
+        #   net[4] = ReLU
+        #   net[5] = Linear
+        net = head.net
+
+        head_normalized = net[0](
+            pair
+        )
+
+        h1_pre = net[1](
+            head_normalized
+        )
+
+        h1 = net[2](
+            h1_pre
+        )
+
+        h2_pre = net[3](
+            h1
+        )
+
+        h2 = net[4](
+            h2_pre
+        )
+
+        output = net[5](
+            h2
+        ).squeeze(-1)
+
+        activations[
+            "head_normalized"
+        ] = head_normalized
+
+        activations[
+            "h1_pre"
+        ] = h1_pre
+
+        activations[
+            "h1"
+        ] = h1
+
+        activations[
+            "h2_pre"
+        ] = h2_pre
+
+        activations[
+            "h2"
+        ] = h2
+
+        activations[
+            "output"
+        ] = output
+
+    return activations
+
+
+# --------------------------------------------------
+# Plotting utilities
+# --------------------------------------------------
+
+def plot_cka_matrix(
+    activations,
+    layer_names,
+    title,
+):
+    """
+    Calculate and display a CKA matrix.
+    """
+
+    cka_matrix = np.zeros(
+        (
+            len(layer_names),
+            len(layer_names),
+        ),
+        dtype=np.float64,
+    )
+
+    for row, name_a in enumerate(
+        layer_names
+    ):
+        for column, name_b in enumerate(
+            layer_names
+        ):
+            cka_matrix[row, column] = (
+                linear_cka(
+                    activations[name_a],
+                    activations[name_b],
+                )
+            )
+
+    print(f"\n{title}")
+    print(cka_matrix)
+
+    plt.figure(
+        figsize=(
+            max(7, len(layer_names) * 0.9),
+            max(6, len(layer_names) * 0.8),
+        )
+    )
+
+    image = plt.imshow(
+        cka_matrix,
+        cmap="viridis",
+        interpolation="nearest",
+        vmin=0.0,
+        vmax=1.0,
+    )
+
+    plt.xticks(
+        range(len(layer_names)),
+        layer_names,
+        rotation=45,
+        ha="right",
+    )
+
+    plt.yticks(
+        range(len(layer_names)),
+        layer_names,
+    )
+
+    plt.colorbar(
+        image,
+        label="Linear CKA",
+    )
+
+    plt.title(title)
+    plt.tight_layout()
+    plt.show()
+
+    return cka_matrix
+
+
+def plot_intrinsic_dimensions(
+    activations,
+    layer_names,
+    title,
+):
+    """
+    Estimate and plot intrinsic dimension for selected layers.
+    """
+
+    dimensions = []
+
+    for layer_name in layer_names:
+        dimension = (
+            estimate_intrinsic_dimension(
+                activations[layer_name]
+            )
+        )
+
+        dimensions.append(
+            dimension
+        )
+
+    print(f"\n{title}")
+
+    for layer_name, dimension in zip(
+        layer_names,
+        dimensions,
+    ):
+        print(
+            f"  {layer_name}: "
+            f"{dimension:.4f}"
+        )
+
+    plt.figure(
+        figsize=(
+            max(7, len(layer_names) * 0.9),
+            5,
+        )
+    )
+
+    plt.plot(
+        layer_names,
+        dimensions,
+        marker="o",
+    )
+
+    plt.title(title)
+    plt.xlabel("Representation")
+    plt.ylabel(
+        "Estimated intrinsic dimension"
+    )
+
+    plt.xticks(
+        rotation=45,
+        ha="right",
+    )
+
+    plt.tight_layout()
+    plt.show()
+
+    return dimensions
+
+
+# --------------------------------------------------
+# Load checkpoint and reconstruct model
+# --------------------------------------------------
+
+checkpoint = torch.load(
+    CHECKPOINT_PATH,
+    map_location="cpu",
+)
+
+cfg = checkpoint["config"]
+
+tasks = cfg.get(
+    "tasks",
+    ("distance", "nearest"),
+)
+
+if isinstance(tasks, str):
+    tasks = (tasks,)
+else:
+    tasks = tuple(tasks)
+
+world = make_grid(
+    cfg["width"],
+    cfg["height"],
+)
+
+model = MultiTaskWorldModel(
+    num_points=len(world.names),
+    emb_dim=cfg["emb_dim"],
+    hidden_dim=cfg["hidden_dim"],
+
+    # These values use transformer defaults when older checkpoint
+    # configurations do not contain them.
+    num_heads=cfg.get(
+        "num_heads",
+        4,
+    ),
+
+    num_layers=cfg.get(
+        "num_layers",
+        2,
+    ),
+
+    dropout=cfg.get(
+        "dropout",
+        0.0,
+    ),
+
+    normalize_embeddings=cfg.get(
+        "normalize_embeddings",
+        False,
+    ),
+)
+
+model.load_state_dict(
+    checkpoint["model_state_dict"]
+)
+
+model.eval()
+
+print(f"Tasks: {tasks}")
+print(
+    "Transformer layers: "
+    f"{len(model.transformer.layers)}"
+)
+
+
+# --------------------------------------------------
+# Entity embedding analysis
+# --------------------------------------------------
+
+num_points = len(
+    world.names
+)
+
+true_coordinates = (
+    world.coordinates
+    .astype(np.float64)
+)
+
+embeddings = (
+    model.emb.weight
+    .detach()
+    .cpu()
+    .numpy()
+)
+
+pca = PCA(
+    n_components=2
+)
+
+embedding_pca = pca.fit_transform(
+    embeddings
+)
+
+linear_prediction, coordinate_r2 = (
+    linear_coordinate_probe(
+        embeddings,
+        true_coordinates,
+    )
+)
+
+cv_r2_mean, cv_r2_std = (
+    cross_validated_coordinate_probe(
+        embeddings,
+        true_coordinates,
+        n_splits=5,
+        seed=SEED,
+    )
+)
+
+latent_distance_matrix = (
+    pairwise_distances(
+        embeddings
+    )
+)
+
+# The grid distance task uses Euclidean distance.
+true_distance_matrix = (
+    pairwise_distances(
+        true_coordinates
+    )
+)
+
+distance_correlation = spearmanr(
+    upper_triangle_values(
+        latent_distance_matrix
+    ),
+    upper_triangle_values(
+        true_distance_matrix
+    ),
+).statistic
+
+neighbor_recall = (
+    nearest_neighbor_recall(
+        embeddings,
+        true_coordinates,
+    )
+)
+
+embedding_intrinsic_dimension = (
+    estimate_intrinsic_dimension(
+        embeddings
+    )
+)
+
+print("\nEntity embedding metrics")
+
+print(
+    "PCA explained variance: "
+    f"{pca.explained_variance_ratio_.sum():.4f}"
 )
 
 print(
-    f"Cross-validated coordinate R²: "
-    f"{cv_r2_mean:.4f} ± {cv_r2_std:.4f}"
+    "In-sample linear coordinate probe R²: "
+    f"{coordinate_r2:.4f}"
 )
+
+print(
+    "Cross-validated coordinate R²: "
+    f"{cv_r2_mean:.4f} "
+    f"± {cv_r2_std:.4f}"
+)
+
+print(
+    "Euclidean-distance Spearman correlation: "
+    f"{distance_correlation:.4f}"
+)
+
+print(
+    "Nearest-neighbor recall: "
+    f"{neighbor_recall:.4f}"
+)
+
+print(
+    "Embedding intrinsic dimension: "
+    f"{embedding_intrinsic_dimension:.4f}"
+)
+
+
+# PCA plot
+plt.figure(
+    figsize=(8, 6)
+)
+
+plt.scatter(
+    embedding_pca[:, 0],
+    embedding_pca[:, 1],
+    s=15,
+)
+
+plt.title(
+    "PCA of shared entity embeddings"
+)
+
+plt.xlabel("PC1")
+plt.ylabel("PC2")
+plt.tight_layout()
+plt.show()
+
+
+# Linear-probe reconstruction
+plt.figure(
+    figsize=(8, 6)
+)
+
+plt.scatter(
+    linear_prediction[:, 0],
+    linear_prediction[:, 1],
+    s=15,
+)
+
+plt.title(
+    "Coordinates reconstructed by linear probe "
+    f"(R²={coordinate_r2:.3f})"
+)
+
+plt.xlabel("Predicted x")
+plt.ylabel("Predicted y")
+plt.axis("equal")
+plt.tight_layout()
+plt.show()
+
+
+# True coordinates
+plt.figure(
+    figsize=(8, 6)
+)
+
+plt.scatter(
+    true_coordinates[:, 0],
+    true_coordinates[:, 1],
+    s=15,
+)
+
+plt.title(
+    "True grid coordinates"
+)
+
+plt.xlabel("x")
+plt.ylabel("y")
+plt.axis("equal")
+plt.tight_layout()
+plt.show()
+
+
+# --------------------------------------------------
+# Pair and transformer representation analysis
+# --------------------------------------------------
+
+pairs = sample_unique_pairs(
+    num_points=num_points,
+    n_pairs=PAIR_SAMPLE_SIZE,
+    seed=SEED,
+)
+
+point_i = torch.tensor(
+    pairs[:, 0],
+    dtype=torch.long,
+)
+
+point_j = torch.tensor(
+    pairs[:, 1],
+    dtype=torch.long,
+)
+
+task_activations = {}
+
+for task in tasks:
+    task_activations[task] = (
+        get_transformer_activations(
+            model=model,
+            point_i=point_i,
+            point_j=point_j,
+            task=task,
+        )
+    )
+
+
+# Create representation names dynamically so the analysis also
+# works when num_layers changes.
+transformer_task_layers = [
+    f"transformer_{layer_index}_task"
+    for layer_index in range(
+        1,
+        len(model.transformer.layers) + 1,
+    )
+]
+
+transformer_sequence_layers = [
+    f"transformer_{layer_index}_sequence"
+    for layer_index in range(
+        1,
+        len(model.transformer.layers) + 1,
+    )
+]
+
+
+for task_name, activations in (
+    task_activations.items()
+):
+    print(
+        f"\n{'=' * 60}"
+    )
+
+    print(
+        f"{task_name.upper()} TASK ANALYSIS"
+    )
+
+    print(
+        f"{'=' * 60}"
+    )
+
+    # The input task token is identical for every sampled pair.
+    # It is therefore excluded from CKA and intrinsic-dimension
+    # analysis because centering makes it a zero representation.
+    task_token_layer_names = [
+        *transformer_task_layers,
+        "pair",
+        "h1",
+        "h2",
+    ]
+
+    plot_cka_matrix(
+        activations=activations,
+        layer_names=task_token_layer_names,
+        title=(
+            f"{task_name.capitalize()} "
+            "task-token and head CKA"
+        ),
+    )
+
+    plot_intrinsic_dimensions(
+        activations=activations,
+        layer_names=task_token_layer_names,
+        title=(
+            f"{task_name.capitalize()} "
+            "task-token and head intrinsic dimensions"
+        ),
+    )
+
+    # Analyze the complete three-token sequence at each
+    # transformer layer.
+    if transformer_sequence_layers:
+        plot_cka_matrix(
+            activations=activations,
+            layer_names=transformer_sequence_layers,
+            title=(
+                f"{task_name.capitalize()} "
+                "full-sequence transformer CKA"
+            ),
+        )
+
+        plot_intrinsic_dimensions(
+            activations=activations,
+            layer_names=transformer_sequence_layers,
+            title=(
+                f"{task_name.capitalize()} "
+                "full-sequence intrinsic dimensions"
+            ),
+        )
+
+    # Compare entity-i and entity-j token representations at
+    # each transformer layer.
+    print(
+        f"\n{task_name.capitalize()} "
+        "entity-token CKA"
+    )
+
+    for layer_index in range(
+        1,
+        len(model.transformer.layers) + 1,
+    ):
+        token_i_name = (
+            f"transformer_{layer_index}_i"
+        )
+
+        token_j_name = (
+            f"transformer_{layer_index}_j"
+        )
+
+        similarity = linear_cka(
+            activations[token_i_name],
+            activations[token_j_name],
+        )
+
+        print(
+            f"layer {layer_index}: "
+            f"{similarity:.4f}"
+        )
+
+
+# --------------------------------------------------
+# Cross-task representation similarity
+# --------------------------------------------------
+
+if (
+    "distance" in task_activations
+    and "nearest" in task_activations
+):
+    print(
+        f"\n{'=' * 60}"
+    )
+
+    print(
+        "CROSS-TASK REPRESENTATION SIMILARITY"
+    )
+
+    print(
+        f"{'=' * 60}"
+    )
+
+    cross_task_layer_names = [
+        *transformer_task_layers,
+        "pair",
+        "h1",
+        "h2",
+    ]
+
+    cross_task_similarities = []
+
+    for layer_name in (
+        cross_task_layer_names
+    ):
+        similarity = linear_cka(
+            task_activations[
+                "distance"
+            ][layer_name],
+            task_activations[
+                "nearest"
+            ][layer_name],
+        )
+
+        cross_task_similarities.append(
+            similarity
+        )
+
+        print(
+            f"{layer_name}: "
+            f"{similarity:.4f}"
+        )
+
+    plt.figure(
+        figsize=(
+            max(
+                7,
+                len(cross_task_layer_names)
+                * 0.9,
+            ),
+            5,
+        )
+    )
+
+    plt.plot(
+        cross_task_layer_names,
+        cross_task_similarities,
+        marker="o",
+    )
+
+    plt.ylim(
+        0.0,
+        1.05,
+    )
+
+    plt.title(
+        "Distance versus nearest cross-task CKA"
+    )
+
+    plt.xlabel("Representation")
+    plt.ylabel("Linear CKA")
+
+    plt.xticks(
+        rotation=45,
+        ha="right",
+    )
+
+    plt.tight_layout()
+    plt.show()
+
+
+# --------------------------------------------------
+# Optional symmetry verification
+# --------------------------------------------------
+
+print(
+    f"\n{'=' * 60}"
+)
+
+print(
+    "PAIR-SYMMETRY CHECK"
+)
+
+print(
+    f"{'=' * 60}"
+)
+
+with torch.inference_mode():
+    for task in tasks:
+        forward_prediction = model(
+            task,
+            point_i,
+            point_j,
+        )
+
+        reverse_prediction = model(
+            task,
+            point_j,
+            point_i,
+        )
+
+        absolute_difference = torch.abs(
+            forward_prediction
+            - reverse_prediction
+        )
+
+        print(
+            f"{task}: "
+            f"mean difference="
+            f"{absolute_difference.mean().item():.10f}, "
+            f"maximum difference="
+            f"{absolute_difference.max().item():.10f}"
+        )

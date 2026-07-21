@@ -52,7 +52,6 @@ class TrainConfig:
     #   ("distance", "nearest")
     tasks: tuple[str, ...] = (
         "distance",
-        "nearest",
     )
 
     # Grid width.
