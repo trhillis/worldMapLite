@@ -116,7 +116,9 @@ class FlatMobiusStrip(Manifold):
 
     def _sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
         """Uniform on [0, L) x [0, w] - exactly Riemannian-uniform (flat)."""
-        raise NotImplementedError
+        x = rng.uniform(low=0.0, high=self.length, size=n)
+        y = rng.uniform(low=0.0, high=self.width, size=n)
+        return np.column_stack((x, y))
 
     def _distance(self, p: np.ndarray, q: np.ndarray) -> np.ndarray:
         """Min over glide images g^k(q), k in [-3, 3]; mind the odd-k y-flip.
@@ -126,7 +128,32 @@ class FlatMobiusStrip(Manifold):
         d(p, g(q)) = d(p, q) - they are the only tests that catch the
         forgot-the-flip bug (see module docstring).
         """
-        raise NotImplementedError
+
+        px = p[:, 0]
+        py = p[:, 1]
+
+        qx = q[:, 0]
+        qy = q[:, 1]
+
+        best = np.full(len(p), np.inf)
+
+        for k in range(-3, 4):
+            image_x = qx + k * self.length
+
+            if k % 2 == 0: # even case
+                image_y = qy
+            else: # odd case
+                image_y = self.width - qy 
+
+
+            distance = np.sqrt(
+                (px - image_x) ** 2 +
+                (py - image_y) ** 2
+            )
+
+            best = np.minimum(best, distance)
+        
+        return best
 
     def _embed(self, points: np.ndarray) -> np.ndarray:
         """Standard ruled Moebius band in R^3. PLOTTING ONLY - not isometric.
@@ -141,4 +168,16 @@ class FlatMobiusStrip(Manifold):
         Check your formula respects the identification: embed(g(p)) must equal
         embed(p) exactly, else your plots will show a seam.
         """
-        raise NotImplementedError
+
+        x = points[:, 0]
+        y = points[:, 1]
+
+        phi = 2 * np.pi * x / self.length
+        rho = y - self.width / 2
+
+        X = (1 + rho * np.cos(phi /2)) * np.cos(phi)
+        Y = (1 + rho * np.cos(phi / 2)) * np.sin(phi)
+        Z = rho * np.sin(phi / 2)
+
+        return np.column_stack([X, Y, Z])
+
