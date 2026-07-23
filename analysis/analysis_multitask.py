@@ -11,8 +11,8 @@ from sklearn.model_selection import KFold
 from scipy.stats import spearmanr
 from skdim.id import TwoNN
 
-from worlds import make_grid
-from multitask_model import MultiTaskWorldModel
+from src.worlds import make_grid
+from src.multitask_model import MultiTaskWorldModel
 
 
 # --------------------------------------------------

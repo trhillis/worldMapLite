@@ -21,17 +21,17 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 
 # Create the experimental grid world.
-from worlds import make_grid
+from src.worlds import make_grid
 
 # Import task-specific dataset generators and utilities.
-from datasets import (
+from src.datasets import (
     make_distance_examples,
     make_nearest_examples,
     build_nearest_and_negative_cache,
 )
 
 # Import the shared-embedding multitask model.
-from multitask_model import MultiTaskWorldModel
+from src.multitask_model import MultiTaskWorldModel
 
 
 @dataclass

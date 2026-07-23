@@ -2,7 +2,7 @@
 import numpy as np
 
 # Import ground-truth task functions.
-from tasks import distance, angle
+from src.tasks import distance, angle
 
 
 def build_grid_nearest_cache(world):
