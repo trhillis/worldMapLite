@@ -11,7 +11,13 @@ from sklearn.model_selection import KFold
 from scipy.stats import spearmanr
 from skdim.id import TwoNN
 
-from worlds import make_grid
+from worlds import make_grid, make_manifold_world
+
+from manifolds.flat_torus import FlatTorus
+from manifolds.mobius import FlatMobiusStrip
+
+from manifolds.polyhedra import octahedron
+
 from multitask_model import MultiTaskWorldModel
 
 
@@ -29,6 +35,172 @@ SEED = 0
 
 print(f"Checkpoint: {CHECKPOINT_PATH}")
 
+
+def build_world_from_config(cfg):
+    """
+    Reconstruct the same world used during training.
+    """
+
+    world_type = cfg.get(
+        "world_type",
+        "grid",
+    )
+
+    if world_type == "grid":
+        return make_grid(
+            cfg["width"],
+            cfg["height"],
+        )
+
+    if world_type != "manifold":
+        raise ValueError(
+            f"Unsupported world type: {world_type}"
+        )
+
+    manifold_name = cfg.get("manifold")
+
+    if manifold_name in {
+        "mobius",
+        "flat_mobius",
+    }:
+        manifold = FlatMobiusStrip(
+            length=cfg.get(
+                "mobius_length",
+                2.0 * np.pi,
+            ),
+            width=cfg.get(
+                "mobius_width",
+                1.0,
+            ),
+        )
+
+        diameter = np.pi
+
+    elif manifold_name in {
+        "torus",
+        "flat_torus",
+    }:
+        manifold = FlatTorus()
+
+        diameter = (
+            np.pi
+            * np.sqrt(2.0)
+        )
+
+    elif manifold_name in {
+        "octahedron",
+        "regular_octahedron",
+    }:
+        manifold = Octahedron()
+
+        diameter = np.sqrt(3.0)
+
+    else:
+        raise ValueError(
+            f"Unknown manifold: {manifold_name}"
+        )
+
+    return make_manifold_world(
+        manifold=manifold,
+        n=cfg["manifold_points"],
+        seed=cfg["seed"],
+        diameter=diameter,
+    )
+
+
+def true_world_distance_matrix(world):
+    world_type = world.meta["type"]
+
+    if world_type == "grid":
+        return pairwise_distances(
+            world.coordinates
+        )
+
+    if world_type == "manifold":
+        if world.manifold is None:
+            raise ValueError(
+                "Manifold world has no manifold object"
+            )
+
+        return np.asarray(
+            world.manifold.distance_matrix(
+                world.coordinates
+            ),
+            dtype=np.float64,
+        )
+
+    raise ValueError(
+        "True distance matrix is not implemented "
+        f"for world type {world_type}"
+    )
+
+
+def get_probe_targets(world):
+    """
+    Choose coordinates used only for linear probing and plotting.
+
+    Grid:
+        use intrinsic 2D grid coordinates
+
+    Manifold:
+        use ambient visualization coordinates
+
+    These probe targets are not used for geodesic-distance evaluation.
+    """
+
+    world_type = world.meta["type"]
+
+    if world_type == "grid":
+        return (
+            np.asarray(
+                world.coordinates,
+                dtype=np.float64,
+            ),
+            "grid coordinates",
+        )
+
+    if world_type == "manifold":
+        if world.ambient_coordinates is None:
+            raise ValueError(
+                "Manifold world has no ambient coordinates"
+            )
+
+        return (
+            np.asarray(
+                world.ambient_coordinates,
+                dtype=np.float64,
+            ),
+            "ambient coordinates",
+        )
+
+    raise ValueError(
+        "Probe targets are not implemented for "
+        f"world type {world_type}"
+    )
+
+
+def project_to_2d(values):
+    """
+    Convert coordinate targets into two dimensions for plotting.
+    """
+
+    values = np.asarray(
+        values,
+        dtype=np.float64,
+    )
+
+    if values.ndim != 2:
+        raise ValueError(
+            "Plot values must have shape "
+            "[num_points, dimensions]"
+        )
+
+    if values.shape[1] == 2:
+        return values
+
+    return PCA(
+        n_components=2
+    ).fit_transform(values)
 
 # --------------------------------------------------
 # General analysis utilities
@@ -274,26 +446,20 @@ def cross_validated_coordinate_probe(
     )
 
 
-def nearest_neighbor_recall(
+def nearest_neighbor_recall_from_matrix(
     embeddings,
-    coordinates,
+    true_distances,
 ):
-    """
-    Measure whether the nearest entity in learned embedding space
-    is one of the true nearest entities in coordinate space.
-
-    Both distances are Euclidean.
-    """
-
     latent_distances = pairwise_distances(
         embeddings
     )
 
-    true_distances = pairwise_distances(
-        coordinates
+    true_distances = np.array(
+        true_distances,
+        dtype=np.float64,
+        copy=True,
     )
 
-    # Prevent each point from selecting itself.
     np.fill_diagonal(
         latent_distances,
         np.inf,
@@ -310,13 +476,17 @@ def nearest_neighbor_recall(
         len(embeddings)
     ):
         minimum_true_distance = (
-            true_distances[point_index].min()
+            true_distances[
+                point_index
+            ].min()
         )
 
         true_neighbors = set(
             np.flatnonzero(
                 np.isclose(
-                    true_distances[point_index],
+                    true_distances[
+                        point_index
+                    ],
                     minimum_true_distance,
                     atol=1e-8,
                     rtol=0.0,
@@ -326,7 +496,9 @@ def nearest_neighbor_recall(
 
         predicted_neighbor = int(
             np.argmin(
-                latent_distances[point_index]
+                latent_distances[
+                    point_index
+                ]
             )
         )
 
@@ -779,9 +951,8 @@ if isinstance(tasks, str):
 else:
     tasks = tuple(tasks)
 
-world = make_grid(
-    cfg["width"],
-    cfg["height"],
+world = build_world_from_config(
+    cfg
 )
 
 model = MultiTaskWorldModel(
@@ -833,9 +1004,8 @@ num_points = len(
     world.names
 )
 
-true_coordinates = (
-    world.coordinates
-    .astype(np.float64)
+probe_targets, probe_target_name = (
+    get_probe_targets(world)
 )
 
 embeddings = (
@@ -856,17 +1026,25 @@ embedding_pca = pca.fit_transform(
 linear_prediction, coordinate_r2 = (
     linear_coordinate_probe(
         embeddings,
-        true_coordinates,
+        probe_targets,
     )
 )
 
 cv_r2_mean, cv_r2_std = (
     cross_validated_coordinate_probe(
         embeddings,
-        true_coordinates,
+        probe_targets,
         n_splits=5,
         seed=SEED,
     )
+)
+
+true_target_plot = project_to_2d(
+    probe_targets
+)
+
+predicted_target_plot = project_to_2d(
+    linear_prediction
 )
 
 latent_distance_matrix = (
@@ -877,8 +1055,8 @@ latent_distance_matrix = (
 
 # The grid distance task uses Euclidean distance.
 true_distance_matrix = (
-    pairwise_distances(
-        true_coordinates
+    true_world_distance_matrix(
+        world
     )
 )
 
@@ -892,9 +1070,9 @@ distance_correlation = spearmanr(
 ).statistic
 
 neighbor_recall = (
-    nearest_neighbor_recall(
+    nearest_neighbor_recall_from_matrix(
         embeddings,
-        true_coordinates,
+        true_distance_matrix,
     )
 )
 
@@ -923,7 +1101,7 @@ print(
 )
 
 print(
-    "Euclidean-distance Spearman correlation: "
+    "Geodesic-distance Spearman correlation: "
     f"{distance_correlation:.4f}"
 )
 
@@ -965,18 +1143,18 @@ plt.figure(
 )
 
 plt.scatter(
-    linear_prediction[:, 0],
-    linear_prediction[:, 1],
+    predicted_target_plot[:, 0],
+    predicted_target_plot[:, 1],
     s=15,
 )
 
 plt.title(
-    "Coordinates reconstructed by linear probe "
+    f"Reconstructed {probe_target_name} "
     f"(R²={coordinate_r2:.3f})"
 )
 
-plt.xlabel("Predicted x")
-plt.ylabel("Predicted y")
+plt.xlabel("Projection 1")
+plt.ylabel("Projection 2")
 plt.axis("equal")
 plt.tight_layout()
 plt.show()
@@ -988,17 +1166,17 @@ plt.figure(
 )
 
 plt.scatter(
-    true_coordinates[:, 0],
-    true_coordinates[:, 1],
+    true_target_plot[:, 0],
+    true_target_plot[:, 1],
     s=15,
 )
 
 plt.title(
-    "True grid coordinates"
+    f"True {probe_target_name}"
 )
 
-plt.xlabel("x")
-plt.ylabel("y")
+plt.xlabel("Projection 1")
+plt.ylabel("Projection 2")
 plt.axis("equal")
 plt.tight_layout()
 plt.show()

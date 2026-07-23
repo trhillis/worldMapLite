@@ -7,6 +7,7 @@ import numpy as np
 # deque provides an efficient queue for breadth-first search.
 from collections import deque
 
+from typing import Any
 
 # Define a general container for every type of world.
 @dataclass
@@ -29,7 +30,7 @@ class World:
     # Each tuple contains the integer indices of two connected points.
     # For example, (3, 4) means point 3 is connected to point 4.
     edges: list[tuple[int, int]]
-
+    
     # Additional information about the world.
     #
     # Example:
@@ -40,6 +41,9 @@ class World:
     #   }
     meta: dict
 
+    manifold: Any | None = None
+
+    ambient_coordinates: np.ndarray | None = None
 
 def make_grid(width=10, height=10) -> World:
     """
@@ -123,6 +127,52 @@ def make_grid(width=10, height=10) -> World:
             "width": width,
             "height": height,
         },
+    )
+
+
+def make_manifold_world(
+        manifold,
+        n=1000,
+        seed=0,
+        diameter=None,
+) -> World:
+    """
+    Sample a finite set of points from a manifold and package them as a World
+    for the existing training pipeline.
+    """
+
+    if diameter is None:
+        raise ValueError(
+            "A manifold diamater is required for normalized distance targets"
+        )
+
+    rng = np.random.default_rng(seed)
+
+    chart_points = manifold.sample(
+        n,
+        rng=rng
+    )
+
+    ambient_points = manifold.embed(
+        chart_points,
+    )
+
+    return World(
+        names=[
+            f"{manifold.name}_{i}"
+            for i in range(n)
+        ],
+        coordinates=chart_points,
+        edges=[],
+        meta={
+            "type": "manifold",
+            "manifold_name": manifold.name,
+            "n": n,
+            "seed": seed,
+            "diameter": float(diameter),
+        },
+        manifold=manifold,
+        ambient_coordinates=ambient_points,
     )
 
 

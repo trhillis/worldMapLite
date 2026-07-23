@@ -32,6 +32,18 @@ def distance(world: World, i: int, j: int):
     # Read the world type from metadata.
     world_type = world.meta["type"]
 
+    if world_type == "manifold":
+        if world.manifold is None:
+            raise ValueError(
+                "Manifold world is missing its manifold object"
+            )
+        return float(
+            world.manifold.distance(
+                world.coordinates[i],
+                world.coordinates[j],
+            )
+        )
+
     if world_type == "grid":
         # IMPORTANT:
         # This uses straight-line Euclidean distance.

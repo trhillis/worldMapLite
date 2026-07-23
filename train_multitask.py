@@ -21,7 +21,8 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 
 # Create the experimental grid world.
-from worlds import make_grid
+from worlds import make_grid, make_manifold_world
+from manifolds.mobius import FlatMobiusStrip
 
 # Import task-specific dataset generators and utilities.
 from datasets import (
@@ -53,6 +54,15 @@ class TrainConfig:
     tasks: tuple[str, ...] = (
         "distance",
     )
+
+    # World type to train on
+    world_type: str = "manifold"
+
+    # Number of sampled manifold points
+    manifold_points: int = 400
+
+    # Name of the manifold
+    manifold: str = "mobius"
 
     # Grid width.
     width: int = 20
@@ -192,11 +202,39 @@ def main():
     print(f"Using device: {device}")
 
     # Create the underlying 20-by-20 grid.
-    world = make_grid(
-        cfg.width,
-        cfg.height,
-    )
+    if cfg.world_type == "grid":
+        world = make_grid(
+            cfg.width,
+            cfg.height,
+        )
 
+    elif cfg.world_type == "manifold":
+
+        if cfg.manifold == "mobius":
+            manifold = FlatMobiusStrip()
+
+        #elif cfg.manifold == "torus":
+        #    manifold = FlatTorus()
+
+        #elif cfg.manifold == "octahedron":
+        #    manifold = Octahedron()
+
+        else:
+            raise ValueError(
+                f"Unknown manifold: {cfg.manifold}"
+            )
+
+        world = make_manifold_world(
+            manifold,
+            n=cfg.manifold_points,
+            seed=cfg.seed,
+            diameter=np.pi,
+        )
+
+    else:
+        raise ValueError(
+            f"Unknown world type: {cfg.world_type}"
+        )
     # These are only necessary when training the nearest task.
     nearest_cache = None
     negative_cache = None

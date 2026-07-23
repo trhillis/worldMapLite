@@ -61,6 +61,80 @@ def build_grid_nearest_cache(world):
     return cache
 
 
+def build_manifold_nearest_cache(
+    world,
+):
+    if world.meta["type"] != "manifold":
+        raise ValueError(
+            "Expected a manifold world"
+        )
+
+    if world.manifold is None:
+        raise ValueError(
+            "Manifold world is missing its manifold object"
+        )
+
+    distance_matrix = (
+        world.manifold.distance_matrix(
+            world.coordinates
+        )
+    )
+
+    distance_matrix = np.asarray(
+        distance_matrix,
+        dtype=np.float64,
+    )
+
+    np.fill_diagonal(
+        distance_matrix,
+        np.inf,
+    )
+
+    nearest_cache = {}
+    negative_cache = {}
+
+    all_indices = np.arange(
+        len(world.names),
+        dtype=np.int64,
+    )
+
+    for i in range(
+        len(world.names)
+    ):
+        minimum_distance = (
+            distance_matrix[i].min()
+        )
+
+        nearest = np.flatnonzero(
+            np.isclose(
+                distance_matrix[i],
+                minimum_distance,
+                atol=1e-8,
+                rtol=0.0,
+            )
+        ).astype(np.int64)
+
+        excluded = np.zeros(
+            len(world.names),
+            dtype=bool,
+        )
+
+        excluded[i] = True
+        excluded[nearest] = True
+
+        nearest_cache[i] = (
+            nearest.tolist()
+        )
+
+        negative_cache[i] = (
+            all_indices[~excluded]
+        )
+
+    return (
+        nearest_cache,
+        negative_cache,
+    )
+
 def build_nearest_and_negative_cache(world):
     """
     Precompute positive and negative nearest-task candidates.
@@ -148,6 +222,11 @@ def distance_scale(world):
         # Graph scaling needs a separately computed graph diameter.
         raise ValueError(
             "Graph distance scaling is not implemented"
+        )
+
+    if world_type == "manifold":
+        return float(
+            world.meta["diameter"]
         )
 
     raise ValueError(
@@ -292,9 +371,25 @@ def make_nearest_examples(
     # IMPORTANT:
     # This cache-building function currently only supports grids.
     if nearest_cache is None or negative_cache is None:
-        nearest_cache, negative_cache = (
-            build_nearest_and_negative_cache(world)
-        )
+        if world.meta["type"] == "grid":
+            nearest_cache, negative_cache = (
+                build_nearest_and_negative_cache(
+                    world
+                )
+            )
+
+        elif world.meta["type"] == "manifold":
+            nearest_cache, negative_cache = (
+                build_manifold_nearest_cache(
+                    world
+                )
+            )
+
+        else:
+            raise ValueError(
+                "Nearest cache is not implemented for "
+                f"{world.meta['type']}"
+            )
 
     # Generate n positive-negative pairs.
     for _ in range(n):
