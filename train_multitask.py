@@ -438,6 +438,11 @@ def main():
     #   ("distance", "nearest") -> distance_nearest
     task_name = "_".join(cfg.tasks)
 
+    if cfg.world_type == "grid":
+        task_name = f"grid_{task_name}"
+    elif cfg.world_type == "manifold":
+        task_name = f"{cfg.manifold}_{task_name}"
+
     # Construct the complete output path.
     save_path = (
         f"models/{task_name}_model.pt"
