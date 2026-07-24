@@ -1,3 +1,8 @@
+import sys
+from pathlib import Path
+project_root = Path(__file__).resolve().parent.parent
+sys.path.append(str(project_root))
+
 # dataclass makes it convenient to define a training-configuration object.
 from dataclasses import dataclass
 
@@ -23,6 +28,7 @@ from torch.utils.data import Dataset, DataLoader
 # Create the experimental grid world.
 from worlds import make_grid, make_manifold_world
 from manifolds.mobius import FlatMobiusStrip
+from manifolds.polyhedra import octahedron
 
 # Import task-specific dataset generators and utilities.
 from src.datasets import (
@@ -62,7 +68,7 @@ class TrainConfig:
     manifold_points: int = 400
 
     # Name of the manifold
-    manifold: str = "mobius"
+    manifold: str = "octahedron"
 
     # Grid width.
     width: int = 20
@@ -216,8 +222,8 @@ def main():
         #elif cfg.manifold == "torus":
         #    manifold = FlatTorus()
 
-        #elif cfg.manifold == "octahedron":
-        #    manifold = Octahedron()
+        elif cfg.manifold == "octahedron":
+           manifold = octahedron()
 
         else:
             raise ValueError(

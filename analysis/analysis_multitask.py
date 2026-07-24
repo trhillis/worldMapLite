@@ -1,3 +1,8 @@
+import sys
+from pathlib import Path
+project_root = Path(__file__).resolve().parent.parent
+sys.path.append(str(project_root))
+
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
@@ -11,21 +16,21 @@ from sklearn.model_selection import KFold
 from scipy.stats import spearmanr
 from skdim.id import TwoNN
 
-from worlds import make_grid, make_manifold_world
+from src.worlds import make_grid, make_manifold_world
 
 from manifolds.flat_torus import FlatTorus
 from manifolds.mobius import FlatMobiusStrip
 
 from manifolds.polyhedra import octahedron
 
-from multitask_model import MultiTaskWorldModel
+from src.multitask_model import MultiTaskWorldModel
 
 
 # --------------------------------------------------
 # Configuration
 # --------------------------------------------------
 
-CHECKPOINT_PATH = "models/mobius_distance_model.pt"
+CHECKPOINT_PATH = "models/octahedron_distance_model.pt"
 
 # Number of unique entity pairs used for transformer
 # representation analysis.
@@ -91,7 +96,7 @@ def build_world_from_config(cfg):
         "octahedron",
         "regular_octahedron",
     }:
-        manifold = Octahedron()
+        manifold = octahedron()
 
         diameter = np.sqrt(3.0)
 
