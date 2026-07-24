@@ -2,7 +2,7 @@
 import numpy as np
 
 # Import the shared World type and world-specific distance functions.
-from worlds import (
+from src.worlds import (
     World,
     spherical_distance,
     haversine_km,

@@ -25,14 +25,14 @@ from worlds import make_grid, make_manifold_world
 from manifolds.mobius import FlatMobiusStrip
 
 # Import task-specific dataset generators and utilities.
-from datasets import (
+from src.datasets import (
     make_distance_examples,
     make_nearest_examples,
     build_nearest_and_negative_cache,
 )
 
 # Import the shared-embedding multitask model.
-from multitask_model import MultiTaskWorldModel
+from src.multitask_model import MultiTaskWorldModel
 
 
 @dataclass
