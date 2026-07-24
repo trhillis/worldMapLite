@@ -25,7 +25,7 @@ from multitask_model import MultiTaskWorldModel
 # Configuration
 # --------------------------------------------------
 
-CHECKPOINT_PATH = "models/distance_model.pt"
+CHECKPOINT_PATH = "models/mobius_distance_model.pt"
 
 # Number of unique entity pairs used for transformer
 # representation analysis.
