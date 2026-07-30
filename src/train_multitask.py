@@ -5,6 +5,7 @@ sys.path.append(str(project_root))
 
 # dataclass makes it convenient to define a training-configuration object.
 from dataclasses import dataclass
+import argparse
 
 # os is used to create the output directory.
 import os
@@ -62,13 +63,13 @@ class TrainConfig:
     )
 
     # World type to train on
-    world_type: str = "manifold"
+    world_type: str = "grid"
 
     # Number of sampled manifold points
     manifold_points: int = 400
 
     # Name of the manifold
-    manifold: str = "octahedron"
+    manifold: str = "mobius"
 
     # Grid width.
     width: int = 20
@@ -88,6 +89,10 @@ class TrainConfig:
     # because every iteration creates one positive and one negative example.
     train_examples_per_task: int = 50_000
 
+    # Seed used only to choose and order the unique distance relations.
+    # Keeping this fixed makes pair-budget conditions nested and comparable.
+    distance_pair_seed: int = 0
+
     # Currently unused because validation loaders are not generated below.
     val_examples_per_task: int = 5_000
 
@@ -95,7 +100,7 @@ class TrainConfig:
     batch_size: int = 256
 
     # Number of optimizer updates.
-    steps: int = 10_000
+    steps: int = 5000
 
     # AdamW learning rate.
     learning_rate: float = 1e-3
@@ -110,7 +115,7 @@ class TrainConfig:
     nearest_weight: float = 1.0
 
     # Random seed for reproducibility.
-    seed: int = 0
+    seed: int = 4
 
 
 class PairDataset(Dataset):
@@ -190,9 +195,10 @@ def infinite_loader(loader):
         yield from loader
 
 
-def main():
+def main(cfg=None):
     # Create a configuration object with the values defined above.
-    cfg = TrainConfig()
+    if cfg is None:
+        cfg = TrainConfig()
 
     # Make the run reproducible.
     set_seed(cfg.seed)
@@ -265,7 +271,13 @@ def main():
         distance_train = make_distance_examples(
             world,
             n=cfg.train_examples_per_task,
-            seed=cfg.seed,
+            seed=cfg.distance_pair_seed,
+            unique_pairs=True,
+        )
+
+        print(
+            f"Using {len(distance_train):,} unique distance pairs "
+            f"(pair seed {cfg.distance_pair_seed})"
         )
 
         # Convert the examples into shuffled minibatches.
@@ -273,7 +285,7 @@ def main():
             PairDataset(distance_train),
             batch_size=cfg.batch_size,
             shuffle=True,
-            drop_last=True,
+            drop_last=False,
         )
 
         # Turn the DataLoader into an endless stream of batches.
@@ -445,9 +457,17 @@ def main():
     task_name = "_".join(cfg.tasks)
 
     if cfg.world_type == "grid":
-        task_name = f"grid_{task_name}"
+        task_name = (
+            f"grid_{task_name}_pairs"
+            f"{cfg.train_examples_per_task}_pairseed"
+            f"{cfg.distance_pair_seed}_seed{cfg.seed}"
+        )
     elif cfg.world_type == "manifold":
-        task_name = f"{cfg.manifold}_{task_name}"
+        task_name = (
+            f"{cfg.manifold}_{task_name}_pairs"
+            f"{cfg.train_examples_per_task}_pairseed"
+            f"{cfg.distance_pair_seed}_seed{cfg.seed}"
+        )
 
     # Construct the complete output path.
     save_path = (
@@ -467,6 +487,20 @@ def main():
 
             # Information describing the grid.
             "world_meta": world.meta,
+
+            # Exact relations are saved so the experiment is auditable and
+            # held-out evaluation can exclude training pairs later.
+            "distance_train_pairs": (
+                torch.tensor(
+                    [
+                        example["indices"]
+                        for example in distance_train
+                    ],
+                    dtype=torch.long,
+                )
+                if "distance" in cfg.tasks
+                else None
+            ),
         },
         save_path,
     )
@@ -477,5 +511,61 @@ def main():
 # Run main only when this file is executed directly.
 #
 # It will not run automatically if this file is imported elsewhere.
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description=(
+            "Train a world model with a controlled number of unique "
+            "pairwise-distance relations."
+        )
+    )
+
+    parser.add_argument(
+        "--distance-pairs",
+        type=int,
+        default=TrainConfig.train_examples_per_task,
+        help="Number of unique unordered distance pairs used for training.",
+    )
+    parser.add_argument(
+        "--pair-seed",
+        type=int,
+        default=TrainConfig.distance_pair_seed,
+        help="Seed for the shared shuffled ordering of distance pairs.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=TrainConfig.seed,
+        help="Model/world random seed.",
+    )
+    parser.add_argument(
+        "--steps",
+        type=int,
+        default=TrainConfig.steps,
+        help="Number of optimizer updates.",
+    )
+    parser.add_argument(
+        "--world-type",
+        choices=("grid", "manifold"),
+        default=TrainConfig.world_type,
+    )
+    parser.add_argument(
+        "--manifold",
+        choices=("mobius", "octahedron"),
+        default=TrainConfig.manifold,
+    )
+
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    main(
+        TrainConfig(
+            train_examples_per_task=args.distance_pairs,
+            distance_pair_seed=args.pair_seed,
+            seed=args.seed,
+            steps=args.steps,
+            world_type=args.world_type,
+            manifold=args.manifold,
+        )
+    )

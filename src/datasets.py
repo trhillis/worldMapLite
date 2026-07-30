@@ -238,6 +238,7 @@ def make_distance_examples(
     world,
     n=1000,
     seed=0,
+    unique_pairs=False,
 ):
     """
     Generate supervised examples for the distance task.
@@ -248,23 +249,36 @@ def make_distance_examples(
         normalized distance between i and j
     """
 
-    # Create a reproducible random-number generator.
-    rng = np.random.default_rng(seed)
-
     # Store generated examples.
     examples = []
 
     # Compute the normalization scale once.
     scale = distance_scale(world)
 
-    # Generate n examples.
-    for _ in range(n):
-        # Select two different point indices.
-        i, j = rng.choice(
-            len(world.names),
-            size=2,
-            replace=False,
+    if unique_pairs:
+        pairs = sample_unique_distance_pairs(
+            num_points=len(world.names),
+            n_pairs=n,
+            seed=seed,
         )
+    else:
+        # Preserve the original sampling behavior for callers that explicitly
+        # want repeated observations.
+        rng = np.random.default_rng(seed)
+        pairs = np.array(
+            [
+                rng.choice(
+                    len(world.names),
+                    size=2,
+                    replace=False,
+                )
+                for _ in range(n)
+            ],
+            dtype=np.int64,
+        )
+
+    # Generate one example for every selected pair.
+    for i, j in pairs:
 
         # Compute the true unnormalized distance.
         raw_distance = float(
@@ -294,6 +308,52 @@ def make_distance_examples(
         })
 
     return examples
+
+
+def sample_unique_distance_pairs(
+    num_points,
+    n_pairs,
+    seed=0,
+):
+    """Sample a reproducible, nested subset of unordered entity pairs.
+
+    For a fixed ``num_points`` and ``seed``, requesting a larger ``n_pairs``
+    returns the same shuffled ordering with a longer prefix. Consequently the
+    1,000-pair condition is an exact subset of the 2,000-pair condition.
+    """
+
+    if num_points < 2:
+        raise ValueError(
+            "At least two points are required to form a distance pair"
+        )
+
+    total_pairs = (
+        num_points * (num_points - 1) // 2
+    )
+
+    if not 0 < n_pairs <= total_pairs:
+        raise ValueError(
+            f"n_pairs must be between 1 and {total_pairs} "
+            f"for {num_points} points; got {n_pairs}"
+        )
+
+    point_i, point_j = np.triu_indices(
+        num_points,
+        k=1,
+    )
+
+    rng = np.random.default_rng(seed)
+    selected = rng.permutation(total_pairs)[:n_pairs]
+
+    return np.column_stack(
+        (
+            point_i[selected],
+            point_j[selected],
+        )
+    ).astype(
+        np.int64,
+        copy=False,
+    )
 
 
 def all_nearest(

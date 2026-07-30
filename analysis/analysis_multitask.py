@@ -7,6 +7,9 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 
+import json
+import pandas as pd
+
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LinearRegression
 from sklearn.linear_model import Ridge
@@ -25,21 +28,60 @@ from manifolds.polyhedra import octahedron
 
 from src.multitask_model import MultiTaskWorldModel
 
+from pathlib import Path
 
 # --------------------------------------------------
 # Configuration
 # --------------------------------------------------
 
-CHECKPOINT_PATH = "models/octahedron_distance_model.pt"
+CHECKPOINT_DIR = Path("models")
+OUTPUT_DIR = Path("analysis_results")
+PLOT_DIR = OUTPUT_DIR / "plots"
+CACHE_DIR = OUTPUT_DIR / "distance_cache"
 
-# Number of unique entity pairs used for transformer
-# representation analysis.
+OUTPUT_DIR.mkdir(
+    parents=True,
+    exist_ok=True,
+)
+
+PLOT_DIR.mkdir(
+    parents=True,
+    exist_ok=True,
+)
+
+CACHE_DIR.mkdir(
+    parents=True,
+    exist_ok=True,
+)
+
+# Adjust this pattern to match your exact checkpoint filenames.
+checkpoint_paths = sorted(
+    CHECKPOINT_DIR.glob("*_distance_*_model.pt")
+)
+
 PAIR_SAMPLE_SIZE = 5000
+DISTANCE_SAMPLE_SIZE = 10_000
 
-SEED = 0
+# Use the same fixed evaluation pairs for every model.
+EVALUATION_SEED = 10_000
 
-print(f"Checkpoint: {CHECKPOINT_PATH}")
+print(
+    f"Found {len(checkpoint_paths)} checkpoints"
+)
 
+for path in checkpoint_paths:
+    print(f"  {path}")
+
+
+def get_world_name(cfg):
+    """
+    Return one consistent world label for tables and paths.
+    """
+
+    if cfg.get("world_type", "grid") == "grid":
+        return "grid"
+
+    return cfg["manifold"]
 
 def build_world_from_config(cfg):
     """
@@ -113,32 +155,85 @@ def build_world_from_config(cfg):
     )
 
 
-def true_world_distance_matrix(world):
+def true_world_distance_matrix(
+    world,
+    world_name,
+    seed,
+):
+    """
+    Load or compute the complete true-distance matrix.
+    """
+
+    cache_path = (
+        CACHE_DIR
+        / f"{world_name}_seed{seed}.npy"
+    )
+
+    if cache_path.exists():
+        return np.load(
+            cache_path
+        )
+
     world_type = world.meta["type"]
 
     if world_type == "grid":
-        return pairwise_distances(
+        matrix = pairwise_distances(
             world.coordinates
         )
 
-    if world_type == "manifold":
+    elif world_type == "manifold":
         if world.manifold is None:
             raise ValueError(
                 "Manifold world has no manifold object"
             )
 
-        return np.asarray(
+        matrix = np.asarray(
             world.manifold.distance_matrix(
                 world.coordinates
             ),
             dtype=np.float64,
         )
 
-    raise ValueError(
-        "True distance matrix is not implemented "
-        f"for world type {world_type}"
+    else:
+        raise ValueError(
+            "True distance matrix is not implemented "
+            f"for world type {world_type}"
+        )
+
+    np.save(
+        cache_path,
+        matrix,
     )
 
+    return matrix
+
+def get_distance_scale(world):
+    """
+    Return the normalization scale used during training.
+    """
+
+    if "diameter" in world.meta:
+        return float(
+            world.meta["diameter"]
+        )
+
+    world_type = world.meta["type"]
+
+    if world_type == "grid":
+        width = world.meta["width"]
+        height = world.meta["height"]
+
+        return float(
+            np.sqrt(
+                (width - 1) ** 2
+                + (height - 1) ** 2
+            )
+        )
+
+    raise ValueError(
+        "No distance scale is available for "
+        f"{world.meta}"
+    )
 
 def get_probe_targets(world):
     """
@@ -355,6 +450,185 @@ def pairwise_distances(x):
         axis=-1,
     )
 
+def sampled_distance_correlation(
+    world,
+    embeddings,
+    n_pairs=10_000,
+    seed=0,
+):
+    """
+    Estimate Spearman correlation between latent distances and
+    true world distances using randomly sampled unique pairs.
+
+    This avoids constructing the full N x N geodesic-distance
+    matrix, which is expensive for polyhedral manifolds.
+    """
+
+    embeddings = np.asarray(
+        embeddings,
+        dtype=np.float64,
+    )
+
+    pairs = sample_unique_pairs(
+        num_points=len(embeddings),
+        n_pairs=n_pairs,
+        seed=seed,
+    )
+
+    point_i = pairs[:, 0]
+    point_j = pairs[:, 1]
+
+    # Euclidean distances in learned embedding space.
+    latent_distances = np.linalg.norm(
+        embeddings[point_i]
+        - embeddings[point_j],
+        axis=1,
+    )
+
+    coordinates = np.asarray(
+        world.coordinates
+    )
+
+    if world.meta["type"] == "grid":
+        true_distances = np.linalg.norm(
+            coordinates[point_i]
+            - coordinates[point_j],
+            axis=1,
+        )
+
+    elif world.meta["type"] == "manifold":
+        if world.manifold is None:
+            raise ValueError(
+                "Manifold world has no manifold object"
+            )
+
+        # Calculate only the sampled manifold distances.
+        true_distances = np.asarray(
+            world.manifold.distance(
+                coordinates[point_i],
+                coordinates[point_j],
+            ),
+            dtype=np.float64,
+        )
+
+    else:
+        raise ValueError(
+            "Distance correlation is not implemented for "
+            f"world type {world.meta['type']}"
+        )
+
+    correlation = spearmanr(
+        latent_distances,
+        true_distances,
+    ).statistic
+
+    return float(correlation)
+
+def sampled_prediction_metrics(
+    model,
+    world,
+    n_pairs=10_000,
+    seed=0,
+):
+    """
+    Evaluate the transformer's predicted distances on sampled pairs.
+    """
+
+    pairs = sample_unique_pairs(
+        num_points=len(world.names),
+        n_pairs=n_pairs,
+        seed=seed,
+    )
+
+    point_i_numpy = pairs[:, 0]
+    point_j_numpy = pairs[:, 1]
+
+    point_i = torch.tensor(
+        point_i_numpy,
+        dtype=torch.long,
+    )
+
+    point_j = torch.tensor(
+        point_j_numpy,
+        dtype=torch.long,
+    )
+
+    coordinates = np.asarray(
+        world.coordinates
+    )
+
+    if world.meta["type"] == "grid":
+        true_raw = np.linalg.norm(
+            coordinates[point_i_numpy]
+            - coordinates[point_j_numpy],
+            axis=1,
+        )
+
+    elif world.meta["type"] == "manifold":
+        true_raw = np.asarray(
+            world.manifold.distance(
+                coordinates[point_i_numpy],
+                coordinates[point_j_numpy],
+            ),
+            dtype=np.float64,
+        )
+
+    else:
+        raise ValueError(
+            "Prediction evaluation is not implemented for "
+            f"{world.meta['type']}"
+        )
+
+    scale = get_distance_scale(world)
+
+    true_normalized = (
+        true_raw / scale
+    )
+
+    with torch.inference_mode():
+        predicted_normalized = (
+            model.forward_distance(
+                point_i,
+                point_j,
+            )
+            .detach()
+            .cpu()
+            .numpy()
+        )
+
+    errors = (
+        predicted_normalized
+        - true_normalized
+    )
+
+    mae = float(
+        np.mean(
+            np.abs(errors)
+        )
+    )
+
+    rmse = float(
+        np.sqrt(
+            np.mean(
+                errors ** 2
+            )
+        )
+    )
+
+    prediction_spearman = float(
+        spearmanr(
+            predicted_normalized,
+            true_normalized,
+        ).statistic
+    )
+
+    return {
+        "prediction_mae": mae,
+        "prediction_rmse": rmse,
+        "prediction_spearman": (
+            prediction_spearman
+        ),
+    }
 
 def upper_triangle_values(matrix):
     """
@@ -804,6 +1078,7 @@ def plot_cka_matrix(
     activations,
     layer_names,
     title,
+    output_path,
 ):
     """
     Calculate and display a CKA matrix.
@@ -867,7 +1142,13 @@ def plot_cka_matrix(
 
     plt.title(title)
     plt.tight_layout()
-    plt.show()
+    plt.savefig(
+        output_path,
+        dpi=150,
+        bbox_inches="tight",
+    )
+
+    plt.close()
 
     return cka_matrix
 
@@ -876,6 +1157,7 @@ def plot_intrinsic_dimensions(
     activations,
     layer_names,
     title,
+    output_path,
 ):
     """
     Estimate and plot intrinsic dimension for selected layers.
@@ -930,536 +1212,653 @@ def plot_intrinsic_dimensions(
     )
 
     plt.tight_layout()
-    plt.show()
+    plt.savefig(
+        output_path,
+        dpi=150,
+        bbox_inches="tight",
+    )
+
+    plt.close()
 
     return dimensions
 
 
-# --------------------------------------------------
-# Load checkpoint and reconstruct model
-# --------------------------------------------------
+def analyze_checkpoint(
+    checkpoint_path,
+):
+    """
+    Analyze one trained model and return one results row.
+    """
 
-checkpoint = torch.load(
-    CHECKPOINT_PATH,
-    map_location="cpu",
-)
-
-cfg = checkpoint["config"]
-
-tasks = cfg.get(
-    "tasks",
-    ("distance", "nearest"),
-)
-
-if isinstance(tasks, str):
-    tasks = (tasks,)
-else:
-    tasks = tuple(tasks)
-
-world = build_world_from_config(
-    cfg
-)
-
-model = MultiTaskWorldModel(
-    num_points=len(world.names),
-    emb_dim=cfg["emb_dim"],
-    hidden_dim=cfg["hidden_dim"],
-
-    # These values use transformer defaults when older checkpoint
-    # configurations do not contain them.
-    num_heads=cfg.get(
-        "num_heads",
-        4,
-    ),
-
-    num_layers=cfg.get(
-        "num_layers",
-        2,
-    ),
-
-    dropout=cfg.get(
-        "dropout",
-        0.0,
-    ),
-
-    normalize_embeddings=cfg.get(
-        "normalize_embeddings",
-        False,
-    ),
-)
-
-model.load_state_dict(
-    checkpoint["model_state_dict"]
-)
-
-model.eval()
-
-print(f"Tasks: {tasks}")
-print(
-    "Transformer layers: "
-    f"{len(model.transformer.layers)}"
-)
-
-
-# --------------------------------------------------
-# Entity embedding analysis
-# --------------------------------------------------
-
-num_points = len(
-    world.names
-)
-
-probe_targets, probe_target_name = (
-    get_probe_targets(world)
-)
-
-embeddings = (
-    model.emb.weight
-    .detach()
-    .cpu()
-    .numpy()
-)
-
-pca = PCA(
-    n_components=2
-)
-
-embedding_pca = pca.fit_transform(
-    embeddings
-)
-
-linear_prediction, coordinate_r2 = (
-    linear_coordinate_probe(
-        embeddings,
-        probe_targets,
+    print(
+        f"\nAnalyzing {checkpoint_path}"
     )
-)
 
-cv_r2_mean, cv_r2_std = (
-    cross_validated_coordinate_probe(
-        embeddings,
-        probe_targets,
-        n_splits=5,
-        seed=SEED,
+    checkpoint = torch.load(
+        checkpoint_path,
+        map_location="cpu",
+        # These checkpoints are produced locally by train_multitask.py and
+        # contain configuration metadata plus the saved training-pair array,
+        # not only model weights. PyTorch 2.6 changed this default to True.
+        weights_only=False,
     )
-)
 
-true_target_plot = project_to_2d(
-    probe_targets
-)
+    cfg = checkpoint["config"]
 
-predicted_target_plot = project_to_2d(
-    linear_prediction
-)
+    tasks = cfg.get(
+        "tasks",
+        ("distance",),
+    )
 
-latent_distance_matrix = (
-    pairwise_distances(
+    if isinstance(tasks, str):
+        tasks = (tasks,)
+    else:
+        tasks = tuple(tasks)
+
+    world_name = get_world_name(
+        cfg
+    )
+
+    seed = int(
+        cfg["seed"]
+    )
+
+    relation_budget = int(
+        cfg.get(
+            "train_examples_per_task",
+            0,
+        )
+    )
+
+    distance_pair_seed = cfg.get(
+        "distance_pair_seed"
+    )
+
+    run_name = (
+        f"{world_name}_pairs{relation_budget}_pairseed"
+        f"{distance_pair_seed}_seed{seed}"
+    )
+
+    run_plot_dir = (
+        PLOT_DIR / run_name
+    )
+
+    run_plot_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    world = build_world_from_config(
+        cfg
+    )
+
+    # Prefer exact saved coordinates when checkpoints contain them.
+    if "world_coordinates" in checkpoint:
+        world.coordinates = np.asarray(
+            checkpoint[
+                "world_coordinates"
+            ]
+        )
+
+    if (
+        "ambient_coordinates"
+        in checkpoint
+        and checkpoint[
+            "ambient_coordinates"
+        ] is not None
+    ):
+        world.ambient_coordinates = (
+            np.asarray(
+                checkpoint[
+                    "ambient_coordinates"
+                ]
+            )
+        )
+
+    model = MultiTaskWorldModel(
+        num_points=len(world.names),
+        emb_dim=cfg["emb_dim"],
+        hidden_dim=cfg["hidden_dim"],
+        num_heads=cfg.get(
+            "num_heads",
+            4,
+        ),
+        num_layers=cfg.get(
+            "num_layers",
+            2,
+        ),
+        dropout=cfg.get(
+            "dropout",
+            0.0,
+        ),
+        normalize_embeddings=cfg.get(
+            "normalize_embeddings",
+            False,
+        ),
+    )
+
+    model.load_state_dict(
+        checkpoint[
+            "model_state_dict"
+        ]
+    )
+
+    model.eval()
+
+    num_points = len(
+        world.names
+    )
+
+    embeddings = (
+        model.emb.weight
+        .detach()
+        .cpu()
+        .numpy()
+    )
+
+    probe_targets, probe_target_name = (
+        get_probe_targets(
+            world
+        )
+    )
+
+    # ----------------------------------------------
+    # Entity metrics
+    # ----------------------------------------------
+
+    pca = PCA(
+        n_components=2
+    )
+
+    embedding_pca = pca.fit_transform(
         embeddings
     )
-)
 
-# The grid distance task uses Euclidean distance.
-true_distance_matrix = (
-    true_world_distance_matrix(
-        world
+    linear_prediction, coordinate_r2 = (
+        linear_coordinate_probe(
+            embeddings,
+            probe_targets,
+        )
     )
-)
 
-distance_correlation = spearmanr(
-    upper_triangle_values(
-        latent_distance_matrix
-    ),
-    upper_triangle_values(
-        true_distance_matrix
-    ),
-).statistic
-
-neighbor_recall = (
-    nearest_neighbor_recall_from_matrix(
-        embeddings,
-        true_distance_matrix,
+    cv_r2_mean, cv_r2_std = (
+        cross_validated_coordinate_probe(
+            embeddings,
+            probe_targets,
+            n_splits=5,
+            seed=EVALUATION_SEED,
+        )
     )
-)
 
-embedding_intrinsic_dimension = (
-    estimate_intrinsic_dimension(
-        embeddings
+    true_target_plot = project_to_2d(
+        probe_targets
     )
-)
 
-print("\nEntity embedding metrics")
+    predicted_target_plot = project_to_2d(
+        linear_prediction
+    )
 
-print(
-    "PCA explained variance: "
-    f"{pca.explained_variance_ratio_.sum():.4f}"
-)
+    embedding_distance_spearman = (
+        sampled_distance_correlation(
+            world=world,
+            embeddings=embeddings,
+            n_pairs=DISTANCE_SAMPLE_SIZE,
+            seed=EVALUATION_SEED,
+        )
+    )
 
-print(
-    "In-sample linear coordinate probe R²: "
-    f"{coordinate_r2:.4f}"
-)
-
-print(
-    "Cross-validated coordinate R²: "
-    f"{cv_r2_mean:.4f} "
-    f"± {cv_r2_std:.4f}"
-)
-
-print(
-    "Geodesic-distance Spearman correlation: "
-    f"{distance_correlation:.4f}"
-)
-
-print(
-    "Nearest-neighbor recall: "
-    f"{neighbor_recall:.4f}"
-)
-
-print(
-    "Embedding intrinsic dimension: "
-    f"{embedding_intrinsic_dimension:.4f}"
-)
-
-
-# PCA plot
-plt.figure(
-    figsize=(8, 6)
-)
-
-plt.scatter(
-    embedding_pca[:, 0],
-    embedding_pca[:, 1],
-    s=15,
-)
-
-plt.title(
-    "PCA of shared entity embeddings"
-)
-
-plt.xlabel("PC1")
-plt.ylabel("PC2")
-plt.tight_layout()
-plt.show()
-
-
-# Linear-probe reconstruction
-plt.figure(
-    figsize=(8, 6)
-)
-
-plt.scatter(
-    predicted_target_plot[:, 0],
-    predicted_target_plot[:, 1],
-    s=15,
-)
-
-plt.title(
-    f"Reconstructed {probe_target_name} "
-    f"(R²={coordinate_r2:.3f})"
-)
-
-plt.xlabel("Projection 1")
-plt.ylabel("Projection 2")
-plt.axis("equal")
-plt.tight_layout()
-plt.show()
-
-
-# True coordinates
-plt.figure(
-    figsize=(8, 6)
-)
-
-plt.scatter(
-    true_target_plot[:, 0],
-    true_target_plot[:, 1],
-    s=15,
-)
-
-plt.title(
-    f"True {probe_target_name}"
-)
-
-plt.xlabel("Projection 1")
-plt.ylabel("Projection 2")
-plt.axis("equal")
-plt.tight_layout()
-plt.show()
-
-
-# --------------------------------------------------
-# Pair and transformer representation analysis
-# --------------------------------------------------
-
-pairs = sample_unique_pairs(
-    num_points=num_points,
-    n_pairs=PAIR_SAMPLE_SIZE,
-    seed=SEED,
-)
-
-point_i = torch.tensor(
-    pairs[:, 0],
-    dtype=torch.long,
-)
-
-point_j = torch.tensor(
-    pairs[:, 1],
-    dtype=torch.long,
-)
-
-task_activations = {}
-
-for task in tasks:
-    task_activations[task] = (
-        get_transformer_activations(
+    prediction_results = (
+        sampled_prediction_metrics(
             model=model,
-            point_i=point_i,
-            point_j=point_j,
-            task=task,
+            world=world,
+            n_pairs=DISTANCE_SAMPLE_SIZE,
+            seed=EVALUATION_SEED,
         )
     )
 
-
-# Create representation names dynamically so the analysis also
-# works when num_layers changes.
-transformer_task_layers = [
-    f"transformer_{layer_index}_task"
-    for layer_index in range(
-        1,
-        len(model.transformer.layers) + 1,
-    )
-]
-
-transformer_sequence_layers = [
-    f"transformer_{layer_index}_sequence"
-    for layer_index in range(
-        1,
-        len(model.transformer.layers) + 1,
-    )
-]
-
-
-for task_name, activations in (
-    task_activations.items()
-):
-    print(
-        f"\n{'=' * 60}"
-    )
-
-    print(
-        f"{task_name.upper()} TASK ANALYSIS"
-    )
-
-    print(
-        f"{'=' * 60}"
-    )
-
-    # The input task token is identical for every sampled pair.
-    # It is therefore excluded from CKA and intrinsic-dimension
-    # analysis because centering makes it a zero representation.
-    task_token_layer_names = [
-        *transformer_task_layers,
-        "pair",
-        "h1",
-        "h2",
-    ]
-
-    plot_cka_matrix(
-        activations=activations,
-        layer_names=task_token_layer_names,
-        title=(
-            f"{task_name.capitalize()} "
-            "task-token and head CKA"
-        ),
-    )
-
-    plot_intrinsic_dimensions(
-        activations=activations,
-        layer_names=task_token_layer_names,
-        title=(
-            f"{task_name.capitalize()} "
-            "task-token and head intrinsic dimensions"
-        ),
-    )
-
-    # Analyze the complete three-token sequence at each
-    # transformer layer.
-    if transformer_sequence_layers:
-        plot_cka_matrix(
-            activations=activations,
-            layer_names=transformer_sequence_layers,
-            title=(
-                f"{task_name.capitalize()} "
-                "full-sequence transformer CKA"
-            ),
+    true_distance_matrix = (
+        true_world_distance_matrix(
+            world=world,
+            world_name=world_name,
+            seed=seed,
         )
-
-        plot_intrinsic_dimensions(
-            activations=activations,
-            layer_names=transformer_sequence_layers,
-            title=(
-                f"{task_name.capitalize()} "
-                "full-sequence intrinsic dimensions"
-            ),
-        )
-
-    # Compare entity-i and entity-j token representations at
-    # each transformer layer.
-    print(
-        f"\n{task_name.capitalize()} "
-        "entity-token CKA"
     )
 
-    for layer_index in range(
-        1,
-        len(model.transformer.layers) + 1,
-    ):
-        token_i_name = (
-            f"transformer_{layer_index}_i"
+    neighbor_recall = (
+        nearest_neighbor_recall_from_matrix(
+            embeddings,
+            true_distance_matrix,
         )
-
-        token_j_name = (
-            f"transformer_{layer_index}_j"
-        )
-
-        similarity = linear_cka(
-            activations[token_i_name],
-            activations[token_j_name],
-        )
-
-        print(
-            f"layer {layer_index}: "
-            f"{similarity:.4f}"
-        )
-
-
-# --------------------------------------------------
-# Cross-task representation similarity
-# --------------------------------------------------
-
-if (
-    "distance" in task_activations
-    and "nearest" in task_activations
-):
-    print(
-        f"\n{'=' * 60}"
     )
 
-    print(
-        "CROSS-TASK REPRESENTATION SIMILARITY"
+    embedding_id = (
+        estimate_intrinsic_dimension(
+            embeddings
+        )
     )
 
-    print(
-        f"{'=' * 60}"
-    )
-
-    cross_task_layer_names = [
-        *transformer_task_layers,
-        "pair",
-        "h1",
-        "h2",
-    ]
-
-    cross_task_similarities = []
-
-    for layer_name in (
-        cross_task_layer_names
-    ):
-        similarity = linear_cka(
-            task_activations[
-                "distance"
-            ][layer_name],
-            task_activations[
-                "nearest"
-            ][layer_name],
-        )
-
-        cross_task_similarities.append(
-            similarity
-        )
-
-        print(
-            f"{layer_name}: "
-            f"{similarity:.4f}"
-        )
+    # ----------------------------------------------
+    # Save entity plots
+    # ----------------------------------------------
 
     plt.figure(
-        figsize=(
-            max(
-                7,
-                len(cross_task_layer_names)
-                * 0.9,
-            ),
-            5,
-        )
+        figsize=(8, 6)
     )
 
-    plt.plot(
-        cross_task_layer_names,
-        cross_task_similarities,
-        marker="o",
-    )
-
-    plt.ylim(
-        0.0,
-        1.05,
+    plt.scatter(
+        embedding_pca[:, 0],
+        embedding_pca[:, 1],
+        s=15,
     )
 
     plt.title(
-        "Distance versus nearest cross-task CKA"
+        f"{run_name}: embedding PCA"
     )
 
-    plt.xlabel("Representation")
-    plt.ylabel("Linear CKA")
-
-    plt.xticks(
-        rotation=45,
-        ha="right",
-    )
-
+    plt.xlabel("PC1")
+    plt.ylabel("PC2")
     plt.tight_layout()
-    plt.show()
 
+    plt.savefig(
+        run_plot_dir
+        / "embedding_pca.png",
+        dpi=150,
+        bbox_inches="tight",
+    )
 
-# --------------------------------------------------
-# Optional symmetry verification
-# --------------------------------------------------
+    plt.close()
 
-print(
-    f"\n{'=' * 60}"
-)
+    plt.figure(
+        figsize=(8, 6)
+    )
 
-print(
-    "PAIR-SYMMETRY CHECK"
-)
+    plt.scatter(
+        predicted_target_plot[:, 0],
+        predicted_target_plot[:, 1],
+        s=15,
+    )
 
-print(
-    f"{'=' * 60}"
-)
+    plt.title(
+        f"{run_name}: reconstructed "
+        f"{probe_target_name}"
+    )
 
-with torch.inference_mode():
+    plt.xlabel("Projection 1")
+    plt.ylabel("Projection 2")
+    plt.axis("equal")
+    plt.tight_layout()
+
+    plt.savefig(
+        run_plot_dir
+        / "probe_reconstruction.png",
+        dpi=150,
+        bbox_inches="tight",
+    )
+
+    plt.close()
+
+    plt.figure(
+        figsize=(8, 6)
+    )
+
+    plt.scatter(
+        true_target_plot[:, 0],
+        true_target_plot[:, 1],
+        s=15,
+    )
+
+    plt.title(
+        f"{run_name}: true "
+        f"{probe_target_name}"
+    )
+
+    plt.xlabel("Projection 1")
+    plt.ylabel("Projection 2")
+    plt.axis("equal")
+    plt.tight_layout()
+
+    plt.savefig(
+        run_plot_dir
+        / "true_targets.png",
+        dpi=150,
+        bbox_inches="tight",
+    )
+
+    plt.close()
+
+    # ----------------------------------------------
+    # Transformer representations
+    # ----------------------------------------------
+
+    pairs = sample_unique_pairs(
+        num_points=num_points,
+        n_pairs=PAIR_SAMPLE_SIZE,
+        seed=EVALUATION_SEED,
+    )
+
+    point_i = torch.tensor(
+        pairs[:, 0],
+        dtype=torch.long,
+    )
+
+    point_j = torch.tensor(
+        pairs[:, 1],
+        dtype=torch.long,
+    )
+
+    task_activations = {}
+
     for task in tasks:
-        forward_prediction = model(
-            task,
-            point_i,
-            point_j,
+        task_activations[task] = (
+            get_transformer_activations(
+                model=model,
+                point_i=point_i,
+                point_j=point_j,
+                task=task,
+            )
         )
 
-        reverse_prediction = model(
-            task,
-            point_j,
-            point_i,
+    transformer_task_layers = [
+        f"transformer_{index}_task"
+        for index in range(
+            1,
+            len(
+                model.transformer.layers
+            ) + 1,
+        )
+    ]
+
+    transformer_sequence_layers = [
+        f"transformer_{index}_sequence"
+        for index in range(
+            1,
+            len(
+                model.transformer.layers
+            ) + 1,
+        )
+    ]
+
+    result = {
+        "checkpoint": str(
+            checkpoint_path
+        ),
+        "world": world_name,
+        "seed": seed,
+        "relation_budget": relation_budget,
+        "distance_pair_seed": distance_pair_seed,
+        "num_points": num_points,
+        "tasks": "_".join(tasks),
+        "pca_explained_variance": float(
+            pca.explained_variance_ratio_.sum()
+        ),
+        "probe_r2": coordinate_r2,
+        "cv_probe_r2_mean": cv_r2_mean,
+        "cv_probe_r2_std": cv_r2_std,
+        "embedding_distance_spearman": (
+            embedding_distance_spearman
+        ),
+        "nearest_recall": neighbor_recall,
+        "embedding_intrinsic_dimension": (
+            embedding_id
+        ),
+        **prediction_results,
+    }
+
+    for task, activations in (
+        task_activations.items()
+    ):
+        task_layer_names = [
+            *transformer_task_layers,
+            "pair",
+            "h1",
+            "h2",
+        ]
+
+        cka_matrix = plot_cka_matrix(
+            activations=activations,
+            layer_names=task_layer_names,
+            title=(
+                f"{run_name}: {task} "
+                "task-token/head CKA"
+            ),
+            output_path=(
+                run_plot_dir
+                / f"{task}_task_cka.png"
+            ),
         )
 
-        absolute_difference = torch.abs(
-            forward_prediction
-            - reverse_prediction
+        dimensions = (
+            plot_intrinsic_dimensions(
+                activations=activations,
+                layer_names=task_layer_names,
+                title=(
+                    f"{run_name}: {task} "
+                    "representation dimensions"
+                ),
+                output_path=(
+                    run_plot_dir
+                    / f"{task}_dimensions.png"
+                ),
+            )
         )
 
-        print(
-            f"{task}: "
-            f"mean difference="
-            f"{absolute_difference.mean().item():.10f}, "
-            f"maximum difference="
-            f"{absolute_difference.max().item():.10f}"
+        for layer_name, dimension in zip(
+            task_layer_names,
+            dimensions,
+        ):
+            result[
+                f"{task}_{layer_name}_id"
+            ] = dimension
+
+        if len(transformer_task_layers) >= 2:
+            result[
+                f"{task}_task_layer1_layer2_cka"
+            ] = float(
+                cka_matrix[0, 1]
+            )
+
+        if (
+            len(
+                transformer_sequence_layers
+            )
+            >= 2
+        ):
+            sequence_cka = plot_cka_matrix(
+                activations=activations,
+                layer_names=(
+                    transformer_sequence_layers
+                ),
+                title=(
+                    f"{run_name}: {task} "
+                    "sequence CKA"
+                ),
+                output_path=(
+                    run_plot_dir
+                    / f"{task}_sequence_cka.png"
+                ),
+            )
+
+            result[
+                f"{task}_sequence_layer1_layer2_cka"
+            ] = float(
+                sequence_cka[0, 1]
+            )
+
+        for layer_index in range(
+            1,
+            len(
+                model.transformer.layers
+            ) + 1,
+        ):
+            token_similarity = linear_cka(
+                activations[
+                    f"transformer_"
+                    f"{layer_index}_i"
+                ],
+                activations[
+                    f"transformer_"
+                    f"{layer_index}_j"
+                ],
+            )
+
+            result[
+                f"{task}_entity_token_"
+                f"cka_layer{layer_index}"
+            ] = token_similarity
+
+    # ----------------------------------------------
+    # Symmetry
+    # ----------------------------------------------
+
+    with torch.inference_mode():
+        for task in tasks:
+            forward_prediction = model(
+                task,
+                point_i,
+                point_j,
+            )
+
+            reverse_prediction = model(
+                task,
+                point_j,
+                point_i,
+            )
+
+            difference = torch.abs(
+                forward_prediction
+                - reverse_prediction
+            )
+
+            result[
+                f"{task}_symmetry_mean"
+            ] = float(
+                difference.mean().item()
+            )
+
+            result[
+                f"{task}_symmetry_max"
+            ] = float(
+                difference.max().item()
+            )
+
+    with open(
+        run_plot_dir / "metrics.json",
+        "w",
+        encoding="utf-8",
+    ) as file:
+        json.dump(
+            result,
+            file,
+            indent=2,
         )
+
+    return result
+
+def main():
+    if not checkpoint_paths:
+        raise FileNotFoundError(
+            f"No checkpoints found in "
+            f"{CHECKPOINT_DIR.resolve()}"
+        )
+
+    result_rows = []
+
+    for checkpoint_path in (
+        checkpoint_paths
+    ):
+        try:
+            result = analyze_checkpoint(
+                checkpoint_path
+            )
+
+            result_rows.append(
+                result
+            )
+
+        except Exception as error:
+            print(
+                f"FAILED: {checkpoint_path}"
+            )
+
+            print(
+                f"  {type(error).__name__}: "
+                f"{error}"
+            )
+
+    if not result_rows:
+        raise RuntimeError(
+            "No checkpoints were analyzed successfully"
+        )
+
+    results = pd.DataFrame(
+        result_rows
+    )
+
+    results = results.sort_values(
+        ["world", "relation_budget", "seed"]
+    )
+
+    results_path = (
+        OUTPUT_DIR / "all_runs.csv"
+    )
+
+    results.to_csv(
+        results_path,
+        index=False,
+    )
+
+    numeric_columns = [
+        column
+        for column in results.columns
+        if (
+            column
+            not in {
+                "checkpoint",
+                "world",
+                "tasks",
+                "relation_budget",
+                "distance_pair_seed",
+            }
+            and pd.api.types.is_numeric_dtype(
+                results[column]
+            )
+        )
+    ]
+
+    summary = (
+        results
+        .groupby(
+            ["world", "relation_budget"]
+        )[
+            numeric_columns
+        ]
+        .agg(
+            ["mean", "std"]
+        )
+    )
+
+    summary_path = (
+        OUTPUT_DIR
+        / "world_summary.csv"
+    )
+
+    summary.to_csv(
+        summary_path
+    )
+
+    print(
+        f"\nSaved individual results to "
+        f"{results_path}"
+    )
+
+    print(
+        f"Saved world summary to "
+        f"{summary_path}"
+    )
+
+    print("\nWorld summary:")
+    print(summary)
+
+
+if __name__ == "__main__":
+    main()
