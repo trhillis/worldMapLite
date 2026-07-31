@@ -107,6 +107,9 @@ class TrainConfig:
     # Number of optimizer updates.
     steps: int = 5000
 
+    # Optional frequency for saving resumable intermediate checkpoints.
+    checkpoint_every: int | None = None
+
     # AdamW learning rate.
     learning_rate: float = 1e-3
 
@@ -281,6 +284,115 @@ def evaluate_distance(
     }
 
 
+def checkpoint_task_name(cfg):
+    """Return the stable experiment identifier used in checkpoint names."""
+
+    task_name = "_".join(cfg.tasks)
+
+    if cfg.world_type == "grid":
+        return (
+            f"grid_{task_name}_pairs"
+            f"{cfg.train_examples_per_task}_pairseed"
+            f"{cfg.distance_pair_seed}_seed{cfg.seed}"
+        )
+
+    if cfg.world_type == "manifold":
+        return (
+            f"{cfg.manifold}_{task_name}_pairs"
+            f"{cfg.train_examples_per_task}_pairseed"
+            f"{cfg.distance_pair_seed}_seed{cfg.seed}"
+        )
+
+    raise ValueError(
+        f"Unknown world type: {cfg.world_type}"
+    )
+
+
+def save_training_checkpoint(
+    model,
+    optimizer,
+    cfg,
+    world,
+    distance_train,
+    distance_eval,
+    distance_history,
+    step,
+    periodic=False,
+):
+    """Save the current training state using the established schema."""
+
+    os.makedirs(
+        "models",
+        exist_ok=True,
+    )
+
+    task_name = checkpoint_task_name(cfg)
+    step_suffix = (
+        f"_step{step}"
+        if periodic
+        else ""
+    )
+    save_path = (
+        f"models/{task_name}{step_suffix}_model.pt"
+    )
+    distance_metrics = (
+        distance_history[-1]["held_out"]
+        if "distance" in cfg.tasks
+        else None
+    )
+
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "config": vars(cfg),
+            "world_meta": world.meta,
+            "distance_train_pairs": (
+                torch.tensor(
+                    [
+                        example["indices"]
+                        for example in distance_train
+                    ],
+                    dtype=torch.long,
+                )
+                if "distance" in cfg.tasks
+                else None
+            ),
+            "distance_eval_pairs": (
+                torch.tensor(
+                    [
+                        example["indices"]
+                        for example in distance_eval
+                    ],
+                    dtype=torch.long,
+                )
+                if "distance" in cfg.tasks
+                else None
+            ),
+            "evaluation": {
+                "distance_final": distance_metrics,
+                "distance_history": distance_history,
+            },
+            "world_coordinates": np.asarray(
+                world.coordinates
+            ),
+            "ambient_coordinates": (
+                np.asarray(
+                    world.ambient_coordinates
+                )
+                if world.ambient_coordinates is not None
+                else None
+            ),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "training_step": step,
+        },
+        save_path,
+    )
+
+    print(f"Saved model to {save_path}")
+
+    return save_path
+
+
 def main(cfg=None):
     # Create a configuration object with the values defined above.
     if cfg is None:
@@ -289,6 +401,14 @@ def main(cfg=None):
     if cfg.eval_every <= 0:
         raise ValueError(
             "eval_every must be a positive integer"
+        )
+
+    if (
+        cfg.checkpoint_every is not None
+        and cfg.checkpoint_every <= 0
+    ):
+        raise ValueError(
+            "checkpoint_every must be a positive integer or None"
         )
 
     # Make the run reproducible.
@@ -354,6 +474,8 @@ def main(cfg=None):
     # is not being trained.
     distance_iterator = None
     nearest_iterator = None
+    distance_train = None
+    distance_eval = None
 
     if "distance" in cfg.tasks:
         print(
@@ -581,6 +703,23 @@ def main(cfg=None):
             # Join all message components with spaces.
             print(" ".join(parts))
 
+        if (
+            cfg.checkpoint_every is not None
+            and step % cfg.checkpoint_every == 0
+            and step != cfg.steps
+        ):
+            save_training_checkpoint(
+                model=model,
+                optimizer=optimizer,
+                cfg=cfg,
+                world=world,
+                distance_train=distance_train,
+                distance_eval=distance_eval,
+                distance_history=distance_history,
+                step=step,
+                periodic=True,
+            )
+
     distance_metrics = (
         distance_history[-1]["held_out"]
         if "distance" in cfg.tasks
@@ -605,99 +744,16 @@ def main(cfg=None):
             f"Spearman={distance_metrics['spearman']:.4f}"
         )
 
-    # Create the model directory when it does not already exist.
-    os.makedirs(
-        "models",
-        exist_ok=True,
+    save_training_checkpoint(
+        model=model,
+        optimizer=optimizer,
+        cfg=cfg,
+        world=world,
+        distance_train=distance_train,
+        distance_eval=distance_eval,
+        distance_history=distance_history,
+        step=cfg.steps,
     )
-
-    # Create a filename based on the active task names.
-    #
-    # Examples:
-    #   ("distance",) -> distance
-    #   ("nearest",) -> nearest
-    #   ("distance", "nearest") -> distance_nearest
-    task_name = "_".join(cfg.tasks)
-
-    if cfg.world_type == "grid":
-        task_name = (
-            f"grid_{task_name}_pairs"
-            f"{cfg.train_examples_per_task}_pairseed"
-            f"{cfg.distance_pair_seed}_seed{cfg.seed}"
-        )
-    elif cfg.world_type == "manifold":
-        task_name = (
-            f"{cfg.manifold}_{task_name}_pairs"
-            f"{cfg.train_examples_per_task}_pairseed"
-            f"{cfg.distance_pair_seed}_seed{cfg.seed}"
-        )
-
-    # Construct the complete output path.
-    save_path = (
-        f"models/{task_name}_model.pt"
-    )
-
-    # Save enough information to reconstruct the trained model later.
-    torch.save(
-        {
-            # Learned weights and biases.
-            "model_state_dict": (
-                model.state_dict()
-            ),
-
-            # Training and architecture settings.
-            "config": vars(cfg),
-
-            # Information describing the grid.
-            "world_meta": world.meta,
-
-            # Exact relations are saved so the experiment is auditable and
-            # held-out evaluation can exclude training pairs later.
-            "distance_train_pairs": (
-                torch.tensor(
-                    [
-                        example["indices"]
-                        for example in distance_train
-                    ],
-                    dtype=torch.long,
-                )
-                if "distance" in cfg.tasks
-                else None
-            ),
-
-            "distance_eval_pairs": (
-                torch.tensor(
-                    [
-                        example["indices"]
-                        for example in distance_eval
-                    ],
-                    dtype=torch.long,
-                )
-                if "distance" in cfg.tasks
-                else None
-            ),
-
-            "evaluation": {
-                "distance_final": distance_metrics,
-                "distance_history": distance_history,
-            },
-
-            "world_coordinates": np.asarray(
-                world.coordinates
-            ),
-
-            "ambient_coordinates": (
-                np.asarray(
-                    world.ambient_coordinates
-                )
-                if world.ambient_coordinates is not None
-                else None
-            ),
-        },
-        save_path,
-    )
-
-    print(f"Saved model to {save_path}")
 
 
 # Run main only when this file is executed directly.
@@ -751,6 +807,15 @@ def parse_args():
         help="Number of optimizer updates.",
     )
     parser.add_argument(
+        "--checkpoint-every",
+        type=int,
+        default=TrainConfig.checkpoint_every,
+        help=(
+            "Save an intermediate checkpoint every N optimizer steps. "
+            "Disabled by default."
+        ),
+    )
+    parser.add_argument(
         "--world-type",
         choices=("grid", "manifold"),
         default=TrainConfig.world_type,
@@ -774,6 +839,7 @@ if __name__ == "__main__":
             eval_every=args.eval_every,
             seed=args.seed,
             steps=args.steps,
+            checkpoint_every=args.checkpoint_every,
             world_type=args.world_type,
             manifold=args.manifold,
         )

@@ -1274,10 +1274,25 @@ def analyze_checkpoint(
         "distance_pair_seed"
     )
 
+    training_step = int(
+        checkpoint.get(
+            "training_step",
+            cfg.get("steps", 0),
+        )
+    )
+
     run_name = (
         f"{world_name}_pairs{relation_budget}_pairseed"
         f"{distance_pair_seed}_seed{seed}"
     )
+
+    if (
+        f"_step{training_step}_model"
+        in Path(checkpoint_path).name
+    ):
+        run_name = (
+            f"{run_name}_step{training_step}"
+        )
 
     run_plot_dir = (
         PLOT_DIR / run_name
@@ -1586,6 +1601,7 @@ def analyze_checkpoint(
         "seed": seed,
         "relation_budget": relation_budget,
         "distance_pair_seed": distance_pair_seed,
+        "training_step": training_step,
         "num_points": num_points,
         "tasks": "_".join(tasks),
         "pca_explained_variance": float(
@@ -1795,7 +1811,12 @@ def main():
     )
 
     results = results.sort_values(
-        ["world", "relation_budget", "seed"]
+        [
+            "world",
+            "relation_budget",
+            "seed",
+            "training_step",
+        ]
     )
 
     results_path = (
@@ -1818,6 +1839,7 @@ def main():
                 "tasks",
                 "relation_budget",
                 "distance_pair_seed",
+                "training_step",
             }
             and pd.api.types.is_numeric_dtype(
                 results[column]
@@ -1828,7 +1850,11 @@ def main():
     summary = (
         results
         .groupby(
-            ["world", "relation_budget"]
+            [
+                "world",
+                "relation_budget",
+                "training_step",
+            ]
         )[
             numeric_columns
         ]
