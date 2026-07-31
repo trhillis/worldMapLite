@@ -20,6 +20,8 @@ from multitask_model import MultiTaskWorldModel
 # --------------------------------------------------
 
 CHECKPOINT_PATH = "models/distance_model.pt"
+#CHECKPOINT_PATH = "models/nearest_model.pt"
+#CHECKPOINT_PATH = "models/distance_nearest_model.pt"
 
 # Number of unique entity pairs used for transformer
 # representation analysis.

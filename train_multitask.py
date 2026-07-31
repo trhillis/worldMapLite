@@ -20,18 +20,25 @@ import torch.nn.functional as F
 # DataLoader creates shuffled minibatches.
 from torch.utils.data import Dataset, DataLoader
 
+if torch.backends.mps.is_available():
+    device = torch.device("mps")
+else:
+    device = torch.device("cpu")
+
 # Create the experimental grid world.
 from worlds import make_grid
 
 # Import task-specific dataset generators and utilities.
 from datasets import (
-    make_distance_examples,
+    make_disjoint_distance_splits,
+    distance_scale,
     make_nearest_examples,
     build_nearest_and_negative_cache,
 )
 
 # Import the shared-embedding multitask model.
 from multitask_model import MultiTaskWorldModel
+from scipy.stats import spearmanr
 
 
 @dataclass
@@ -51,9 +58,15 @@ class TrainConfig:
     # Multitask:
     #   ("distance", "nearest")
     tasks: tuple[str, ...] = (
-        "distance",
-    )
-
+         "distance",
+     )
+   
+    # tasks: tuple[str, ...] = (
+    # "nearest",
+    # )
+    # tasks = ("distance", "nearest")
+    # distance_weight = 1.0
+    
     # Grid width.
     width: int = 20
 
@@ -70,7 +83,7 @@ class TrainConfig:
     #
     # For nearest, this parameter creates twice as many actual examples,
     # because every iteration creates one positive and one negative example.
-    train_examples_per_task: int = 50_000
+    train_examples_per_task: int = 2_000
 
     # Currently unused because validation loaders are not generated below.
     val_examples_per_task: int = 5_000
@@ -79,22 +92,25 @@ class TrainConfig:
     batch_size: int = 256
 
     # Number of optimizer updates.
-    steps: int = 10_000
+    steps: int = 200_000
+
+    eval_every: int = 1_000
 
     # AdamW learning rate.
     learning_rate: float = 1e-3
 
     # Strength of parameter shrinkage used by AdamW.
-    weight_decay: float = 1e-4
+    weight_decay: float = 1e-2
 
     # Contribution of the distance loss to total loss.
     distance_weight: float = 1.0
 
     # Contribution of nearest loss to total loss.
-    nearest_weight: float = 1.0
+    nearest_weight: float = 0.1
 
     # Random seed for reproducibility.
     seed: int = 0
+    data_seed: int = 0
 
 
 class PairDataset(Dataset):
@@ -173,6 +189,69 @@ def infinite_loader(loader):
         # Yield every batch from the current epoch.
         yield from loader
 
+def evaluate_distance(
+    model,
+    examples,
+    scale,
+    device,
+    batch_size,
+):
+    """
+    Evaluate distance predictions on held-out point pairs.
+    """
+
+    loader = DataLoader(
+        PairDataset(examples),
+        batch_size=batch_size,
+        shuffle=False,
+    )
+
+    predictions = []
+    targets = []
+
+    model.eval()
+
+    with torch.inference_mode():
+        for point_i, point_j, target in loader:
+            prediction = model.forward_distance(
+                point_i.to(device),
+                point_j.to(device),
+            )
+
+            predictions.append(
+                prediction.cpu()
+            )
+
+            targets.append(target)
+
+    prediction = torch.cat(predictions).numpy()
+    target = torch.cat(targets).numpy()
+
+    residual_sum = float(
+        np.square(target - prediction).sum()
+    )
+
+    total_sum = float(
+        np.square(target - target.mean()).sum()
+    )
+
+    return {
+        "n_examples": len(target),
+        "mae": float(
+            np.abs(target - prediction).mean()
+            * scale
+        ),
+        "r2": float(
+            1.0 - residual_sum / total_sum
+        ),
+        "spearman": float(
+            spearmanr(
+                target,
+                prediction,
+            ).statistic
+        ),
+    }
+
 
 def main():
     # Create a configuration object with the values defined above.
@@ -183,13 +262,12 @@ def main():
 
     # Use the GPU when CUDA is available.
     # Otherwise use the CPU.
-    device = torch.device(
-        "cuda"
-        if torch.cuda.is_available()
-        else "cpu"
-    )
-
-    print(f"Using device: {device}")
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
 
     # Create the underlying 20-by-20 grid.
     world = make_grid(
@@ -215,13 +293,18 @@ def main():
     nearest_iterator = None
 
     if "distance" in cfg.tasks:
-        print("Generating distance training examples...")
+        print(
+            "Generating disjoint distance training "
+            "and evaluation pairs..."
+        )
 
-        # Generate labeled point pairs for distance prediction.
-        distance_train = make_distance_examples(
-            world,
-            n=cfg.train_examples_per_task,
-            seed=cfg.seed,
+        distance_train, distance_eval = (
+            make_disjoint_distance_splits(
+                world,
+                n_train=cfg.train_examples_per_task,
+                n_eval=cfg.val_examples_per_task,
+                seed=cfg.data_seed,
+            )
         )
 
         # Convert the examples into shuffled minibatches.
@@ -280,6 +363,8 @@ def main():
         lr=cfg.learning_rate,
         weight_decay=cfg.weight_decay,
     )
+
+    distance_history = []
 
     # Perform the requested number of optimizer updates.
     for step in range(1, cfg.steps + 1):
@@ -368,6 +453,35 @@ def main():
         # Update the model parameters.
         optimizer.step()
 
+        if (
+            "distance" in cfg.tasks
+            and (
+                step == 1
+                or step % cfg.eval_every == 0
+                or step == cfg.steps
+            )
+        ):
+            metrics = evaluate_distance(
+                model,
+                distance_eval,
+                distance_scale(world),
+                device,
+                cfg.batch_size,
+            )
+
+            metrics["step"] = step
+            metrics["train_loss"] = float(loss.item())
+
+            distance_history.append(metrics)
+
+            print(
+                f"eval step={step:6d} "
+                f"train_loss={metrics['train_loss']:.6f} "
+                f"MAE={metrics['mae']:.4f} "
+                f"R²={metrics['r2']:.4f} "
+                f"Spearman={metrics['spearman']:.4f}"
+            )
+
         # Print progress every 250 steps and on the first step.
         if step % 250 == 0 or step == 1:
             # Begin the printed message with step and total loss.
@@ -385,6 +499,38 @@ def main():
 
             # Join all message components with spaces.
             print(" ".join(parts))
+
+    # distance_metrics = None
+
+    # if "distance" in cfg.tasks:
+    #     distance_metrics = evaluate_distance(
+    #         model,
+    #         distance_eval,
+    #         distance_scale(world),
+    #         device,
+    #         cfg.batch_size,
+    #     )
+
+    distance_metrics = (
+        distance_history[-1]
+        if "distance" in cfg.tasks
+        else None
+    )
+
+    print("\nHeld-out distance evaluation")
+    print(
+        f"examples={distance_metrics['n_examples']}"
+    )
+    print(
+        f"MAE={distance_metrics['mae']:.4f}"
+    )
+    print(
+        f"R²={distance_metrics['r2']:.4f}"
+    )
+    print(
+        f"Spearman={distance_metrics['spearman']:.4f}"
+    )
+
 
     # Create the model directory when it does not already exist.
     os.makedirs(
@@ -418,6 +564,11 @@ def main():
 
             # Information describing the grid.
             "world_meta": world.meta,
+
+            "evaluation": {
+                "distance_final": distance_metrics,
+                "distance_history": distance_history,
+            },
         },
         save_path,
     )

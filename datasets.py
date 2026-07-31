@@ -216,6 +216,76 @@ def make_distance_examples(
 
     return examples
 
+def make_disjoint_distance_splits(
+    world,
+    n_train,
+    n_eval,
+    seed=0,
+):
+    """
+    Create distance-training and evaluation examples from disjoint point pairs.
+
+    Each unordered pair can appear in only one split, so held-out evaluation
+    measures generalization to relations the model never trained on.
+    """
+
+    if not isinstance(n_train, (int, np.integer)) or n_train < 0:
+        raise ValueError("n_train must be a nonnegative integer")
+
+    if not isinstance(n_eval, (int, np.integer)) or n_eval < 0:
+        raise ValueError("n_eval must be a nonnegative integer")
+
+    n_points = len(world.names)
+    pair_i, pair_j = np.triu_indices(n_points, k=1)
+
+    n_requested = n_train + n_eval
+
+    if n_requested > len(pair_i):
+        raise ValueError(
+            f"Requested {n_requested} unique pairs, but only "
+            f"{len(pair_i)} are available"
+        )
+
+    rng = np.random.default_rng(seed)
+
+    selected = rng.choice(
+        len(pair_i),
+        size=n_requested,
+        replace=False,
+    )
+
+    scale = distance_scale(world)
+
+    def build_examples(pair_indices):
+        examples = []
+
+        for pair_index in pair_indices:
+            i = int(pair_i[pair_index])
+            j = int(pair_j[pair_index])
+
+            raw_distance = float(
+                distance(world, i, j)
+            )
+
+            examples.append({
+                "indices": (i, j),
+                "answer": raw_distance / scale,
+                "raw_answer": raw_distance,
+                "task": "distance",
+            })
+
+        return examples
+
+    train_examples = build_examples(
+        selected[:n_train]
+    )
+
+    eval_examples = build_examples(
+        selected[n_train:]
+    )
+
+    return train_examples, eval_examples
+
 
 def all_nearest(
     world,
