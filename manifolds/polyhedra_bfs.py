@@ -89,11 +89,26 @@ uniform - no sqrt tricks needed.
 Isometries for the invariance test: the solid's symmetry group (48 elements
 for the octahedron, 120 for the icosahedron); coordinate reflections and
 90-degree z-rotation (octahedron) are easy concrete cases.
+
+DIAGNOSTIC VARIANT
+-------------------
+This file is an exact copy of polyhedra.py except for the search strategy in
+_pair_distance: instead of a best-first (Dijkstra/A*-style) priority-queue
+search, it uses a plain FIFO breadth-first traversal - closer to the
+README's literal "BFS over face sequences" description - still pruned by the
+same admissible source-to-portal lower bound, just without the priority-queue
+ordering (so no early "stop the whole search" break is safe; each dequeued
+state is instead individually checked against the incumbent best before it's
+expanded). Everything else (geometry helpers, validation, vertex-shortcut
+termination, sampling, embedding) is byte-for-byte identical to polyhedra.py.
+Existence purpose: isolate whether an icosahedron correctness gap traces back
+to the search STRATEGY (priority-queue vs. plain BFS) or to something else
+(geometry/validation) that both strategies would share.
 """
 
 from __future__ import annotations
 
-import heapq
+from collections import deque
 from functools import cached_property
 
 import numpy as np
@@ -134,7 +149,7 @@ ICOSAHEDRON_FACES = np.array(
     dtype=np.int64)
 
 
-class PolyhedralSurface(Manifold):
+class PolyhedralSurfaceBFS(Manifold):
     """Geodesics on a closed convex triangulated surface; the mesh is DATA.
 
     Chart points: (face, b0, b1, b2) rows, shape (4,) each - see the module
@@ -429,12 +444,20 @@ class PolyhedralSurface(Manifold):
 
     def _pair_distance(self, f_p: int, b_p: np.ndarray,
                         f_q: int, b_q: np.ndarray) -> float:
-        """Best-first (Dijkstra/A*-style) search over unfolding sequences
-        from face f_p to face f_q, admissibly pruned by the distance from
-        the source to each candidate's entry portal. No depth cap anywhere -
-        termination comes from the no-revisit rule alone (a shortest path on
-        a convex mesh visits each face at most once), so the same code works
-        on any convex mesh (octahedron or icosahedron).
+        """Plain FIFO breadth-first search over unfolding sequences from face
+        f_p to face f_q - the README's literal "BFS over face sequences",
+        still pruned by the admissible source-to-portal lower bound, but
+        without the priority-queue (best-first) ordering used in
+        polyhedra.py. No depth cap anywhere - termination comes from the
+        no-revisit rule alone (a shortest path on a convex mesh visits each
+        face at most once), so the same code works on any convex mesh
+        (octahedron or icosahedron).
+
+        Because the queue is not ordered by lower bound, a dequeued state's
+        own lb must be re-checked against the current incumbent `best`
+        before it is expanded (an item pushed early in the traversal may
+        have been overtaken by a better `best` found later) - there is no
+        safe "stop the whole search" break here, unlike the heap version.
 
         A target sitting exactly on a vertex has one valid representation
         per incident face, not only the one named by (f_q, b_q) - and the
@@ -454,13 +477,12 @@ class PolyhedralSurface(Manifold):
         verts0 = self._local2d(self.triangle(f_p))
         p2d = b_p @ verts0
         best = np.inf
-        counter = 0
-        # heap item: (lower_bound, tie_breaker, face, verts2d, visited, portals)
-        heap = [(0.0, counter, f_p, verts0, frozenset({f_p}), ())]
-        while heap:
-            lb, _, face, verts2d, visited, portals = heapq.heappop(heap)
+        # queue item: (lower_bound, face, verts2d, visited, portals)
+        queue = deque([(0.0, f_p, verts0, frozenset({f_p}), ())])
+        while queue:
+            lb, face, verts2d, visited, portals = queue.popleft()
             if lb >= best:
-                break  # min-heap: nothing left in the heap can improve `best`
+                continue  # this state can no longer improve `best`; skip it
             for ij in _LOCAL_EDGES:
                 va = int(self.faces[face, ij[0]])
                 vb = int(self.faces[face, ij[1]])
@@ -495,18 +517,17 @@ class PolyhedralSurface(Manifold):
 
                 lb_new = self._point_segment_distance(p2d, *portal)
                 if lb_new < best:
-                    counter += 1
-                    heapq.heappush(heap, (
-                        lb_new, counter, neighbor, new_verts2d,
+                    queue.append((
+                        lb_new, neighbor, new_verts2d,
                         visited | {neighbor}, new_portals))
         return best
 
 
-def octahedron() -> PolyhedralSurface:
-    """Unit-edge regular octahedron as a PolyhedralSurface."""
-    return PolyhedralSurface(OCTAHEDRON_VERTICES, OCTAHEDRON_FACES, "octahedron")
+def octahedron_bfs() -> PolyhedralSurfaceBFS:
+    """Unit-edge regular octahedron as a PolyhedralSurfaceBFS."""
+    return PolyhedralSurfaceBFS(OCTAHEDRON_VERTICES, OCTAHEDRON_FACES, "octahedron_bfs")
 
 
-def icosahedron() -> PolyhedralSurface:
-    """Unit-edge regular icosahedron as a PolyhedralSurface."""
-    return PolyhedralSurface(ICOSAHEDRON_VERTICES, ICOSAHEDRON_FACES, "icosahedron")
+def icosahedron_bfs() -> PolyhedralSurfaceBFS:
+    """Unit-edge regular icosahedron as a PolyhedralSurfaceBFS."""
+    return PolyhedralSurfaceBFS(ICOSAHEDRON_VERTICES, ICOSAHEDRON_FACES, "icosahedron_bfs")

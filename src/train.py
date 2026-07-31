@@ -4,9 +4,9 @@ import torch
 import torch.nn.functional as F
 import os
 
-from worlds import make_grid
-from datasets import make_distance_examples, make_nearest_examples
-from model import DistanceMLP, NearestMLP
+from src.worlds import make_grid
+from src.datasets import make_distance_examples, make_nearest_examples
+from src.model import DistanceMLP, NearestMLP
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")

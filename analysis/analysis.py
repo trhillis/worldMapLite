@@ -7,8 +7,8 @@ from torch_cka import CKA
 import numpy as np
 from skdim.id import TwoNN
 
-from worlds import make_grid
-from model import DistanceMLP, NearestMLP
+from src.worlds import make_grid
+from src.model import DistanceMLP, NearestMLP
 
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # print(f"Using device: {device}")

@@ -2,7 +2,7 @@
 import numpy as np
 
 # Import ground-truth task functions.
-from tasks import distance, angle
+from src.tasks import distance, angle
 
 
 def build_grid_nearest_cache(world):
@@ -60,6 +60,80 @@ def build_grid_nearest_cache(world):
 
     return cache
 
+
+def build_manifold_nearest_cache(
+    world,
+):
+    if world.meta["type"] != "manifold":
+        raise ValueError(
+            "Expected a manifold world"
+        )
+
+    if world.manifold is None:
+        raise ValueError(
+            "Manifold world is missing its manifold object"
+        )
+
+    distance_matrix = (
+        world.manifold.distance_matrix(
+            world.coordinates
+        )
+    )
+
+    distance_matrix = np.asarray(
+        distance_matrix,
+        dtype=np.float64,
+    )
+
+    np.fill_diagonal(
+        distance_matrix,
+        np.inf,
+    )
+
+    nearest_cache = {}
+    negative_cache = {}
+
+    all_indices = np.arange(
+        len(world.names),
+        dtype=np.int64,
+    )
+
+    for i in range(
+        len(world.names)
+    ):
+        minimum_distance = (
+            distance_matrix[i].min()
+        )
+
+        nearest = np.flatnonzero(
+            np.isclose(
+                distance_matrix[i],
+                minimum_distance,
+                atol=1e-8,
+                rtol=0.0,
+            )
+        ).astype(np.int64)
+
+        excluded = np.zeros(
+            len(world.names),
+            dtype=bool,
+        )
+
+        excluded[i] = True
+        excluded[nearest] = True
+
+        nearest_cache[i] = (
+            nearest.tolist()
+        )
+
+        negative_cache[i] = (
+            all_indices[~excluded]
+        )
+
+    return (
+        nearest_cache,
+        negative_cache,
+    )
 
 def build_nearest_and_negative_cache(world):
     """
@@ -150,6 +224,11 @@ def distance_scale(world):
             "Graph distance scaling is not implemented"
         )
 
+    if world_type == "manifold":
+        return float(
+            world.meta["diameter"]
+        )
+
     raise ValueError(
         f"Unknown world type: {world_type}"
     )
@@ -159,6 +238,7 @@ def make_distance_examples(
     world,
     n=1000,
     seed=0,
+    unique_pairs=False,
 ):
     """
     Generate supervised examples for the distance task.
@@ -169,23 +249,44 @@ def make_distance_examples(
         normalized distance between i and j
     """
 
-    # Create a reproducible random-number generator.
-    rng = np.random.default_rng(seed)
+    if unique_pairs:
+        pairs = sample_unique_distance_pairs(
+            num_points=len(world.names),
+            n_pairs=n,
+            seed=seed,
+        )
+    else:
+        # Preserve the original sampling behavior for callers that explicitly
+        # want repeated observations.
+        rng = np.random.default_rng(seed)
+        pairs = np.array(
+            [
+                rng.choice(
+                    len(world.names),
+                    size=2,
+                    replace=False,
+                )
+                for _ in range(n)
+            ],
+            dtype=np.int64,
+        )
 
-    # Store generated examples.
+    return _make_distance_examples_from_pairs(
+        world,
+        pairs,
+    )
+
+
+def _make_distance_examples_from_pairs(
+    world,
+    pairs,
+):
+    """Build normalized distance examples for explicit point pairs."""
+
     examples = []
-
-    # Compute the normalization scale once.
     scale = distance_scale(world)
 
-    # Generate n examples.
-    for _ in range(n):
-        # Select two different point indices.
-        i, j = rng.choice(
-            len(world.names),
-            size=2,
-            replace=False,
-        )
+    for i, j in pairs:
 
         # Compute the true unnormalized distance.
         raw_distance = float(
@@ -215,6 +316,145 @@ def make_distance_examples(
         })
 
     return examples
+
+
+def make_disjoint_distance_splits(
+    world,
+    n_train,
+    n_eval,
+    seed=0,
+):
+    """Create fixed held-out and nested training distance examples.
+
+    For a fixed world, ``n_eval``, and seed, the evaluation split is the same
+    regardless of the requested training budget. Training pairs follow the
+    evaluation prefix in one reproducible permutation, so larger training
+    budgets contain every pair from smaller budgets.
+    """
+
+    if (
+        not isinstance(n_train, (int, np.integer))
+        or isinstance(n_train, (bool, np.bool_))
+        or n_train <= 0
+    ):
+        raise ValueError(
+            "n_train must be a positive integer"
+        )
+
+    if (
+        not isinstance(n_eval, (int, np.integer))
+        or isinstance(n_eval, (bool, np.bool_))
+        or n_eval <= 0
+    ):
+        raise ValueError(
+            "n_eval must be a positive integer"
+        )
+
+    num_points = len(world.names)
+
+    if num_points < 2:
+        raise ValueError(
+            "At least two points are required to form a distance pair"
+        )
+
+    total_pairs = (
+        num_points * (num_points - 1) // 2
+    )
+    requested_pairs = n_train + n_eval
+
+    if requested_pairs > total_pairs:
+        raise ValueError(
+            f"Requested {n_train} training pairs and {n_eval} evaluation "
+            f"pairs, but only {total_pairs} unique pairs are available"
+        )
+
+    point_i, point_j = np.triu_indices(
+        num_points,
+        k=1,
+    )
+    rng = np.random.default_rng(seed)
+    ordering = rng.permutation(total_pairs)
+
+    evaluation_indices = ordering[:n_eval]
+    training_indices = ordering[
+        n_eval:n_eval + n_train
+    ]
+
+    evaluation_pairs = np.column_stack(
+        (
+            point_i[evaluation_indices],
+            point_j[evaluation_indices],
+        )
+    ).astype(
+        np.int64,
+        copy=False,
+    )
+    training_pairs = np.column_stack(
+        (
+            point_i[training_indices],
+            point_j[training_indices],
+        )
+    ).astype(
+        np.int64,
+        copy=False,
+    )
+
+    return (
+        _make_distance_examples_from_pairs(
+            world,
+            training_pairs,
+        ),
+        _make_distance_examples_from_pairs(
+            world,
+            evaluation_pairs,
+        ),
+    )
+
+
+def sample_unique_distance_pairs(
+    num_points,
+    n_pairs,
+    seed=0,
+):
+    """Sample a reproducible, nested subset of unordered entity pairs.
+
+    For a fixed ``num_points`` and ``seed``, requesting a larger ``n_pairs``
+    returns the same shuffled ordering with a longer prefix. Consequently the
+    1,000-pair condition is an exact subset of the 2,000-pair condition.
+    """
+
+    if num_points < 2:
+        raise ValueError(
+            "At least two points are required to form a distance pair"
+        )
+
+    total_pairs = (
+        num_points * (num_points - 1) // 2
+    )
+
+    if not 0 < n_pairs <= total_pairs:
+        raise ValueError(
+            f"n_pairs must be between 1 and {total_pairs} "
+            f"for {num_points} points; got {n_pairs}"
+        )
+
+    point_i, point_j = np.triu_indices(
+        num_points,
+        k=1,
+    )
+
+    rng = np.random.default_rng(seed)
+    selected = rng.permutation(total_pairs)[:n_pairs]
+
+    return np.column_stack(
+        (
+            point_i[selected],
+            point_j[selected],
+        )
+    ).astype(
+        np.int64,
+        copy=False,
+    )
 
 
 def all_nearest(
@@ -292,9 +532,25 @@ def make_nearest_examples(
     # IMPORTANT:
     # This cache-building function currently only supports grids.
     if nearest_cache is None or negative_cache is None:
-        nearest_cache, negative_cache = (
-            build_nearest_and_negative_cache(world)
-        )
+        if world.meta["type"] == "grid":
+            nearest_cache, negative_cache = (
+                build_nearest_and_negative_cache(
+                    world
+                )
+            )
+
+        elif world.meta["type"] == "manifold":
+            nearest_cache, negative_cache = (
+                build_manifold_nearest_cache(
+                    world
+                )
+            )
+
+        else:
+            raise ValueError(
+                "Nearest cache is not implemented for "
+                f"{world.meta['type']}"
+            )
 
     # Generate n positive-negative pairs.
     for _ in range(n):
