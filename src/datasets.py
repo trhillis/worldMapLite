@@ -249,12 +249,6 @@ def make_distance_examples(
         normalized distance between i and j
     """
 
-    # Store generated examples.
-    examples = []
-
-    # Compute the normalization scale once.
-    scale = distance_scale(world)
-
     if unique_pairs:
         pairs = sample_unique_distance_pairs(
             num_points=len(world.names),
@@ -277,7 +271,21 @@ def make_distance_examples(
             dtype=np.int64,
         )
 
-    # Generate one example for every selected pair.
+    return _make_distance_examples_from_pairs(
+        world,
+        pairs,
+    )
+
+
+def _make_distance_examples_from_pairs(
+    world,
+    pairs,
+):
+    """Build normalized distance examples for explicit point pairs."""
+
+    examples = []
+    scale = distance_scale(world)
+
     for i, j in pairs:
 
         # Compute the true unnormalized distance.
@@ -308,6 +316,99 @@ def make_distance_examples(
         })
 
     return examples
+
+
+def make_disjoint_distance_splits(
+    world,
+    n_train,
+    n_eval,
+    seed=0,
+):
+    """Create fixed held-out and nested training distance examples.
+
+    For a fixed world, ``n_eval``, and seed, the evaluation split is the same
+    regardless of the requested training budget. Training pairs follow the
+    evaluation prefix in one reproducible permutation, so larger training
+    budgets contain every pair from smaller budgets.
+    """
+
+    if (
+        not isinstance(n_train, (int, np.integer))
+        or isinstance(n_train, (bool, np.bool_))
+        or n_train <= 0
+    ):
+        raise ValueError(
+            "n_train must be a positive integer"
+        )
+
+    if (
+        not isinstance(n_eval, (int, np.integer))
+        or isinstance(n_eval, (bool, np.bool_))
+        or n_eval <= 0
+    ):
+        raise ValueError(
+            "n_eval must be a positive integer"
+        )
+
+    num_points = len(world.names)
+
+    if num_points < 2:
+        raise ValueError(
+            "At least two points are required to form a distance pair"
+        )
+
+    total_pairs = (
+        num_points * (num_points - 1) // 2
+    )
+    requested_pairs = n_train + n_eval
+
+    if requested_pairs > total_pairs:
+        raise ValueError(
+            f"Requested {n_train} training pairs and {n_eval} evaluation "
+            f"pairs, but only {total_pairs} unique pairs are available"
+        )
+
+    point_i, point_j = np.triu_indices(
+        num_points,
+        k=1,
+    )
+    rng = np.random.default_rng(seed)
+    ordering = rng.permutation(total_pairs)
+
+    evaluation_indices = ordering[:n_eval]
+    training_indices = ordering[
+        n_eval:n_eval + n_train
+    ]
+
+    evaluation_pairs = np.column_stack(
+        (
+            point_i[evaluation_indices],
+            point_j[evaluation_indices],
+        )
+    ).astype(
+        np.int64,
+        copy=False,
+    )
+    training_pairs = np.column_stack(
+        (
+            point_i[training_indices],
+            point_j[training_indices],
+        )
+    ).astype(
+        np.int64,
+        copy=False,
+    )
+
+    return (
+        _make_distance_examples_from_pairs(
+            world,
+            training_pairs,
+        ),
+        _make_distance_examples_from_pairs(
+            world,
+            evaluation_pairs,
+        ),
+    )
 
 
 def sample_unique_distance_pairs(
