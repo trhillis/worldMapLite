@@ -1,0 +1,17 @@
+mesh,implementation,n_pairs,mean_seconds,std_seconds
+octahedron,best_first (polyhedra.py),50,0.05185693333623931,0.0006848995882882289
+octahedron,plain_bfs (polyhedra_bfs.py),50,0.05226323333530066,0.0011104878972102833
+octahedron,best_first (polyhedra.py),100,0.10418963334329116,0.0004434454955632813
+octahedron,plain_bfs (polyhedra_bfs.py),100,0.10152369999559596,0.0013460246897957022
+octahedron,best_first (polyhedra.py),200,0.2177813333303978,0.0009665459550509489
+octahedron,plain_bfs (polyhedra_bfs.py),200,0.2181626666764108,0.0028694160867493027
+octahedron,best_first (polyhedra.py),800,0.8787766000023112,0.004102968535359463
+octahedron,plain_bfs (polyhedra_bfs.py),800,0.8739795333337194,0.00069382724789824
+icosahedron,best_first (polyhedra.py),50,0.3870457333396189,0.001098021800937725
+icosahedron,plain_bfs (polyhedra_bfs.py),50,0.3808001000046109,0.0002069945124313291
+icosahedron,best_first (polyhedra.py),100,0.8862178666652957,0.0019741515605367676
+icosahedron,plain_bfs (polyhedra_bfs.py),100,0.8836656666826457,0.0018503513916625922
+icosahedron,best_first (polyhedra.py),200,1.5657475333330997,0.024854427748811945
+icosahedron,plain_bfs (polyhedra_bfs.py),200,1.5564371666696388,0.02564762588064852
+icosahedron,best_first (polyhedra.py),800,6.406444333328788,0.06963101245101735
+icosahedron,plain_bfs (polyhedra_bfs.py),800,6.306844799992784,0.015589352979313608

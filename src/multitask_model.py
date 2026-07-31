@@ -125,6 +125,18 @@ class MultiTaskWorldModel(nn.Module):
             )
         )
 
+        # Create one learned token for the same_triangle task.
+        #
+        # Shape:
+        #   [1, 1, emb_dim]
+        self.same_triangle_token = nn.Parameter(
+            torch.empty(
+                1,
+                1,
+                emb_dim,
+            )
+        )
+
         # Define one transformer encoder block.
         transformer_layer = nn.TransformerEncoderLayer(
             # Every token contains emb_dim values.
@@ -165,6 +177,12 @@ class MultiTaskWorldModel(nn.Module):
             hidden_dim=hidden_dim,
         )
 
+        # Task-specific same_triangle classifier.
+        self.same_triangle_head = TransformerHead(
+            model_dim=emb_dim,
+            hidden_dim=hidden_dim,
+        )
+
         # Initialize entity embeddings with small random values.
         nn.init.normal_(
             self.emb.weight,
@@ -180,6 +198,12 @@ class MultiTaskWorldModel(nn.Module):
         # Initialize the nearest task token.
         nn.init.normal_(
             self.nearest_token,
+            std=0.02,
+        )
+
+        # Initialize the same_triangle task token.
+        nn.init.normal_(
+            self.same_triangle_token,
             std=0.02,
         )
 
@@ -210,12 +234,8 @@ class MultiTaskWorldModel(nn.Module):
         Convert two batches of point indices into one transformer
         representation.
 
-        Each sequence contains three tokens:
-
-            [task token, point i, point j]
-
-        No positional embeddings are added, so the two entity tokens
-        are treated symmetrically.
+        Looks up both entities' embeddings, then delegates to
+        pair_representation_from_embeddings.
         """
 
         # Look up embeddings for the first point in every pair.
@@ -224,8 +244,34 @@ class MultiTaskWorldModel(nn.Module):
         # Look up embeddings for the second point in every pair.
         embedding_j = self.encode(j)
 
+        return self.pair_representation_from_embeddings(
+            embedding_i,
+            embedding_j,
+            task_token,
+        )
+
+    def pair_representation_from_embeddings(
+        self,
+        embedding_i,
+        embedding_j,
+        task_token,
+    ):
+        """
+        Convert two batches of entity embeddings (already looked up, e.g.
+        via self.encode, or supplied directly - such as an embedding row
+        under gradient-based recovery that never went through self.emb)
+        into one transformer representation.
+
+        Each sequence contains three tokens:
+
+            [task token, point i, point j]
+
+        No positional embeddings are added, so the two entity tokens
+        are treated symmetrically.
+        """
+
         # Read the current batch size.
-        batch_size = i.shape[0]
+        batch_size = embedding_i.shape[0]
 
         # Copy the learned task token once for every example.
         #
@@ -291,6 +337,30 @@ class MultiTaskWorldModel(nn.Module):
         # Run the representation through the distance-specific head.
         return self.distance_head(pair)
 
+    def forward_distance_from_embeddings(self, embedding_i, embedding_j):
+        """
+        Distance-task equivalent of forward_distance, but taking entity
+        embedding tensors directly instead of point indices - used to
+        recover a held-out point's embedding from a few probe distances,
+        where that embedding is a standalone nn.Parameter rather than a
+        row looked up from self.emb.
+
+        Applies the same optional normalization as self.encode, so
+        callers do not need to duplicate that logic.
+        """
+
+        if self.normalize_embeddings:
+            embedding_i = F.normalize(embedding_i, dim=-1)
+            embedding_j = F.normalize(embedding_j, dim=-1)
+
+        pair = self.pair_representation_from_embeddings(
+            embedding_i,
+            embedding_j,
+            self.distance_token,
+        )
+
+        return self.distance_head(pair)
+
     def forward_nearest(self, i, j):
         """
         Predict nearest-neighbor logits for each point pair.
@@ -309,6 +379,24 @@ class MultiTaskWorldModel(nn.Module):
         # Run the representation through the nearest-specific head.
         return self.nearest_head(pair)
 
+    def forward_same_triangle(self, i, j):
+        """
+        Predict same_triangle logits for each point pair.
+
+        This returns logits, not probabilities.
+        """
+
+        # Create the transformer pair representation using
+        # the same_triangle task token.
+        pair = self.pair_representation(
+            i,
+            j,
+            self.same_triangle_token,
+        )
+
+        # Run the representation through the same_triangle-specific head.
+        return self.same_triangle_head(pair)
+
     def forward(self, task, i, j):
         """
         General task-routing method.
@@ -321,6 +409,10 @@ class MultiTaskWorldModel(nn.Module):
         # Route nearest examples to the nearest head.
         if task == "nearest":
             return self.forward_nearest(i, j)
+
+        # Route same_triangle examples to the same_triangle head.
+        if task == "same_triangle":
+            return self.forward_same_triangle(i, j)
 
         # Reject unsupported task names.
         raise ValueError(

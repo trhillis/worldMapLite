@@ -1,0 +1,41 @@
+Checkpoint: models/octahedron_distance_model.pt
+Experiment: 075
+Manifold: octahedron (ambient_dim=3)
+Entities: 200
+Transformer layers: 2
+
+Excluding 10 holdout points from bulk embedding-quality metrics (plotted separately, marked)
+
+Entity embedding metrics (non-holdout points)
+PCA explained variance (3 components): 0.7926
+In-sample linear coordinate probe R²: 0.9779
+Cross-validated coordinate R²: 0.9655 ± 0.0029
+Geodesic-distance Spearman correlation: 0.8876
+Nearest-neighbor recall: 0.8105
+Embedding intrinsic dimension: 2.9058
+
+octahedron: entity-token CKA
+layer 1: 0.4567
+layer 2: 0.7432
+
+============================================================
+PAIR-SYMMETRY CHECK
+============================================================
+distance: mean difference=0.0000000349, maximum difference=0.0000002980
+
+============================================================
+HELD-OUT PAIR GENERALIZATION
+============================================================
+test_fraction: 0.1
+held-out:        n=  1796 loss=0.00001 spearman=0.9999
+in-distribution: n=  1796 loss=0.00001 spearman=0.9999
+generalization gap (held-out loss - in-distribution loss): +0.00000
+
+============================================================
+HOLDOUT POINT GENERALIZATION
+============================================================
+n_holdout_points: 10
+n_probes: 8
+probe_steps: 200
+holdout-to-trained (aggregate): n=  1820 loss=0.00013 spearman=0.9970
+holdout-to-holdout:            n=    45 loss=0.00043 spearman=0.9394

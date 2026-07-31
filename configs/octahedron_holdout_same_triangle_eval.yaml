@@ -1,0 +1,46 @@
+# Phase-3 experiment: train on distance + same_triangle together, hold out
+# some points from every training pair (restricted to a single face, like
+# octahedron_holdout_face_smoke.yaml), then recover each holdout point's
+# embedding from a handful of probe distances ONLY (see
+# src/holdout_probe.py - recovery is always distance-only). Because
+# same_triangle is also an active task here, src/train_manifold.py passes
+# eval_tasks=tasks to recover_and_evaluate_holdout_points, so the printed
+# "holdout points" summary reports BOTH distance and same_triangle
+# aggregate stats for the recovered points - i.e. this answers "does an
+# embedding recovered purely from distance probes also correctly predict
+# same_triangle for a point it was never directly probed on?"
+#
+# At n_points=50, seed=0, face 0 has 7 sampled points - comfortably more
+# than n_holdout_points=3 below (see octahedron_holdout_face_smoke.yaml's
+# note on re-checking this if n_points/seed change).
+#
+# Run with:
+#   python -m src.train_manifold configs/octahedron_holdout_same_triangle_eval.yaml
+
+manifold:
+  name: octahedron
+  n_points: 50
+  seed: 0
+
+model:
+  emb_dim: 32
+  hidden_dim: 128
+  num_heads: 4
+  num_layers: 2
+  dropout: 0.0
+  normalize_embeddings: false
+
+training:
+  tasks: [distance, same_triangle]
+  train_examples: 2000
+  batch_size: 64
+  steps: 500
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-4
+  seed: 0
+  progress_interval: 100
+  n_holdout_points: 3
+  n_probes: 3
+  probe_steps: 100
+  probe_lr: 0.05
+  holdout_faces: [0]

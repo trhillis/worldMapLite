@@ -1,0 +1,30 @@
+Checkpoint: models/octahedron_distance_model.pt
+Experiment: 061
+Manifold: octahedron (ambient_dim=3)
+Entities: 800
+Transformer layers: 2
+
+Entity embedding metrics
+PCA explained variance (3 components): 0.6212
+In-sample linear coordinate probe R²: 0.9633
+Cross-validated coordinate R²: 0.9607 ± 0.0039
+Geodesic-distance Spearman correlation: 0.8232
+Nearest-neighbor recall: 0.0663
+Embedding intrinsic dimension: 13.6131
+
+octahedron: entity-token CKA
+layer 1: 0.3307
+layer 2: 0.5265
+
+============================================================
+PAIR-SYMMETRY CHECK
+============================================================
+distance: mean difference=0.0000000290, maximum difference=0.0000002384
+
+============================================================
+HELD-OUT PAIR GENERALIZATION
+============================================================
+test_fraction: 0.1
+held-out:        n= 31960 loss=0.00049 spearman=0.9923
+in-distribution: n= 31960 loss=0.00047 spearman=0.9924
+generalization gap (held-out loss - in-distribution loss): +0.00001

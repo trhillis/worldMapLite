@@ -1,0 +1,36 @@
+# Smoke test for the point-holdout generalization feature: confirms
+# split_points, make_holdout_point_pairs, and
+# recover_and_evaluate_holdout_points wire together correctly end-to-end,
+# at a scale that runs in seconds. Holdout points are drawn uniformly at
+# random over all 50 points (no holdout_faces restriction) - see
+# octahedron_holdout_face_smoke.yaml for the face-localized variant.
+#
+# Run with:
+#   python -m src.train_manifold configs/octahedron_holdout_smoke.yaml
+
+manifold:
+  name: octahedron
+  n_points: 50
+  seed: 0
+
+model:
+  emb_dim: 32
+  hidden_dim: 128
+  num_heads: 4
+  num_layers: 2
+  dropout: 0.0
+  normalize_embeddings: false
+
+training:
+  train_examples: 2000
+  batch_size: 64
+  steps: 500
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-4
+  seed: 0
+  progress_interval: 100  # steps between embedding-quality snapshots; 0 disables
+  n_holdout_points: 5   # points withheld from every training pair
+  n_probes: 5           # true probe distances used to recover each holdout point
+  probe_steps: 100       # AdamW steps in the recovery/fine-tune loop
+  probe_lr: 0.05
+  # probe_weight_decay omitted - defaults to this config's own weight_decay

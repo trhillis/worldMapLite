@@ -1,0 +1,31 @@
+# Distance-only transformer training on the octahedron manifold - rerun of
+# octahedron_emb12.yaml (emb_dim=12) at a shared 20000-step budget across
+# the whole emb_dim sweep (8/12/16/24/32), now with the held-out pair
+# generalization check (training.test_fraction) added in
+# experiments/manifold_learning/octahedron/EXPERIMENTS.md experiment 012.
+#
+# Run with:
+#   python -m src.train_manifold configs/octahedron_emb12_20k.yaml
+
+manifold:
+  name: octahedron       # looked up via manifolds.get_manifold()
+  n_points: 800           # manifolds/README.md's recommended default
+  seed: 0
+
+model:
+  emb_dim: 12             # sweep point
+  hidden_dim: 128
+  num_heads: 4
+  num_layers: 2
+  dropout: 0.0
+  normalize_embeddings: false
+
+training:
+  train_examples: 50000
+  batch_size: 256
+  steps: 20000            # shared sweep budget, smaller than the original 50000
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-4
+  seed: 0
+  progress_interval: 500  # steps between embedding-quality snapshots; 0 disables
+  test_fraction: 0.1      # fraction of all C(n_points, 2) pairs reserved as a held-out generalization check

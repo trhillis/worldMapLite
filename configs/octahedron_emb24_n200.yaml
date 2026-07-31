@@ -1,0 +1,37 @@
+# Distance-only transformer training on the octahedron manifold - held-out
+# generalization stress test proposed in
+# experiments/manifold_learning/octahedron/EXPERIMENTS.md experiment 015's
+# next steps: same emb_dim=24/50000-step setup as octahedron_emb24.yaml,
+# but with far fewer entity points (200 vs 800), so the same
+# train_examples=50000 draws now oversample the training pool instead of
+# sparsely covering it - C(200,2)=19900 total pairs, ~17910 in the 90%
+# train pool, so each train-pool pair is drawn ~2.8 times on average
+# (vs. ~0.17 times at n_points=800) - a much denser, more memorization-
+# prone training signal to test whether held-out generalization still
+# holds.
+#
+# Run with:
+#   python -u -m src.train_manifold configs/octahedron_emb24_n200.yaml
+
+manifold:
+  name: octahedron       # looked up via manifolds.get_manifold()
+  n_points: 200            # far fewer than the usual 800, to densify pair coverage
+  seed: 0
+
+model:
+  emb_dim: 24
+  hidden_dim: 128
+  num_heads: 4
+  num_layers: 2
+  dropout: 0.0
+  normalize_embeddings: false
+
+training:
+  train_examples: 50000
+  batch_size: 256
+  steps: 50000
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-4
+  seed: 0
+  progress_interval: 500  # steps between embedding-quality snapshots; 0 disables
+  test_fraction: 0.1      # fraction of all C(n_points, 2) pairs reserved as a held-out generalization check

@@ -1,0 +1,41 @@
+# Rerun of experiment 018 (emb_dim=8, n_points=200, densified pair
+# coverage - the lowest intrinsic dimension of any run in the whole
+# EXPERIMENTS.md file, 2.08, closest to the octahedron's true 2D surface)
+# with the point-level holdout generalization feature added: 10 of the
+# 200 points, all sampled from a single octahedron face (face 0, which
+# has 25 of the 200 points at this seed), are withheld from every
+# training pair, then recovered after training from 8 true probe
+# distances each and evaluated against the rest - face-localized so the
+# recovered points can be visually checked against their true local
+# neighborhood in analysis_manifold.py's PCA plots.
+#
+# Run with:
+#   python -u -m src.train_manifold configs/octahedron_emb8_n200_holdout.yaml
+
+manifold:
+  name: octahedron
+  n_points: 200
+  seed: 0
+
+model:
+  emb_dim: 8
+  hidden_dim: 128
+  num_heads: 4
+  num_layers: 2
+  dropout: 0.0
+  normalize_embeddings: false
+
+training:
+  train_examples: 50000
+  batch_size: 256
+  steps: 50000
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-4
+  seed: 0
+  progress_interval: 500
+  test_fraction: 0.1
+  n_holdout_points: 10
+  n_probes: 8
+  probe_steps: 200
+  probe_lr: 0.05
+  holdout_faces: [0]

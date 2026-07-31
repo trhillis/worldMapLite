@@ -30,4 +30,27 @@ __all__ = [
     "OCTAHEDRON_FACES",
     "ICOSAHEDRON_VERTICES",
     "ICOSAHEDRON_FACES",
+    "get_manifold",
 ]
+
+# Name -> zero-arg factory, so a manifold instance can be reconstructed from
+# a saved config/checkpoint string. Extend this dict as more manifolds are
+# implemented; nothing else in the training/analysis pipeline needs to change.
+_MANIFOLD_FACTORIES = {
+    "octahedron": octahedron,
+    "icosahedron": icosahedron,
+    "flat_torus": FlatTorus,
+    "mobius": FlatMobiusStrip,
+}
+
+
+def get_manifold(name: str) -> Manifold:
+    """Look up a manifold instance by name (see _MANIFOLD_FACTORIES)."""
+
+    if name not in _MANIFOLD_FACTORIES:
+        raise ValueError(
+            f"Unknown manifold {name!r}; available: "
+            f"{sorted(_MANIFOLD_FACTORIES)}"
+        )
+
+    return _MANIFOLD_FACTORIES[name]()

@@ -1,0 +1,38 @@
+# same_triangle_weight extension point: same setup as the 0.1-1.0 sweep
+# (octahedron_stw_*.yaml - 800 points, emb_dim=32, tasks: [distance,
+# same_triangle], seed 0, 20000 steps) but training.same_triangle_weight
+# pushed below the swept range to 0.01. Purpose: 079 (weight=0.2) was the
+# standout of the 0.1-1.0 sweep and 078 (weight=0.1) was second-worst on
+# held-out generalization despite being the lowest weight tried - this
+# checks whether going lower still (0.01) continues down 078's path or
+# does something else entirely, given how non-monotonic the rest of the
+# sweep turned out to be.
+#
+# Run with:
+#   python -u -m src.train_manifold configs/same_triangle_weight_sweep/octahedron_stw_0.01_20k.yaml
+
+manifold:
+  name: octahedron
+  n_points: 800
+  seed: 0
+
+model:
+  emb_dim: 32
+  hidden_dim: 128
+  num_heads: 4
+  num_layers: 2
+  dropout: 0.0
+  normalize_embeddings: false
+
+training:
+  tasks: [distance, same_triangle]
+  train_examples: 50000
+  batch_size: 256
+  steps: 20000
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-4
+  seed: 0
+  progress_interval: 500
+  test_fraction: 0.1
+  same_triangle_weight: 0.01
+  # distance_weight omitted - defaults to 1.0

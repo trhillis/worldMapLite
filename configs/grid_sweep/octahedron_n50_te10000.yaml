@@ -1,0 +1,28 @@
+# Grid sweep point: n_points=50, train_examples=10000.
+# Generated for experiments/manifold_learning/octahedron/EXPERIMENTS.md
+# entries 020-069 - a train_examples x n_points sweep, otherwise
+# identical to configs/octahedron_default.yaml (emb_dim=24, steps=50000).
+#
+# Run with:
+#   python -m src.train_manifold configs/grid_sweep/octahedron_n50_te10000.yaml
+
+manifold:
+  name: octahedron
+  n_points: 50
+  seed: 0
+model:
+  emb_dim: 24
+  hidden_dim: 128
+  num_heads: 4
+  num_layers: 2
+  dropout: 0.0
+  normalize_embeddings: false
+training:
+  train_examples: 10000
+  batch_size: 256
+  steps: 50000
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  seed: 0
+  progress_interval: 500
+  test_fraction: 0.1

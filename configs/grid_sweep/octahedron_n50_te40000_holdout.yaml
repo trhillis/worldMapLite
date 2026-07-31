@@ -1,0 +1,38 @@
+# Rerun of experiment 047 (grid sweep: n_points=50, train_examples=40000 -
+# the best nearest-neighbor-recall run in the whole EXPERIMENTS.md file,
+# 0.82) with the point-level holdout generalization feature added: 5 of
+# the 50 points, all sampled from a single octahedron face (face 0,
+# which has 7 of the 50 points at this seed), are withheld from every
+# training pair, then recovered after training from 5 true probe
+# distances each and evaluated against the rest - face-localized so the
+# recovered points can be visually checked against their true local
+# neighborhood in analysis_manifold.py's PCA plots.
+#
+# Run with:
+#   python -m src.train_manifold configs/grid_sweep/octahedron_n50_te40000_holdout.yaml
+
+manifold:
+  name: octahedron
+  n_points: 50
+  seed: 0
+model:
+  emb_dim: 24
+  hidden_dim: 128
+  num_heads: 4
+  num_layers: 2
+  dropout: 0.0
+  normalize_embeddings: false
+training:
+  train_examples: 40000
+  batch_size: 256
+  steps: 50000
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  seed: 0
+  progress_interval: 500
+  test_fraction: 0.1
+  n_holdout_points: 5
+  n_probes: 5
+  probe_steps: 200
+  probe_lr: 0.05
+  holdout_faces: [0]

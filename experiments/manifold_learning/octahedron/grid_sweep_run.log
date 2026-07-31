@@ -1,0 +1,102 @@
+[1/50] exp 020: n_points=10, train_examples=5000 - starting
+[1/50] exp 020: n_points=10, train_examples=5000 - starting
+[1/50] exp 020: done
+[2/50] exp 021: n_points=10, train_examples=10000 - starting
+[2/50] exp 021: done
+[3/50] exp 022: n_points=10, train_examples=15000 - starting
+[3/50] exp 022: done
+[4/50] exp 023: n_points=10, train_examples=20000 - starting
+[4/50] exp 023: done
+[5/50] exp 024: n_points=10, train_examples=25000 - starting
+[5/50] exp 024: done
+[6/50] exp 025: n_points=10, train_examples=30000 - starting
+[6/50] exp 025: done
+[7/50] exp 026: n_points=10, train_examples=35000 - starting
+[7/50] exp 026: done
+[8/50] exp 027: n_points=10, train_examples=40000 - starting
+[8/50] exp 027: done
+[9/50] exp 028: n_points=10, train_examples=45000 - starting
+[9/50] exp 028: done
+[10/50] exp 029: n_points=10, train_examples=50000 - starting
+[10/50] exp 029: done
+[11/50] exp 030: n_points=20, train_examples=5000 - starting
+[11/50] exp 030: done
+[12/50] exp 031: n_points=20, train_examples=10000 - starting
+[12/50] exp 031: done
+[13/50] exp 032: n_points=20, train_examples=15000 - starting
+[13/50] exp 032: done
+[14/50] exp 033: n_points=20, train_examples=20000 - starting
+[14/50] exp 033: done
+[15/50] exp 034: n_points=20, train_examples=25000 - starting
+[15/50] exp 034: done
+[16/50] exp 035: n_points=20, train_examples=30000 - starting
+[16/50] exp 035: done
+[17/50] exp 036: n_points=20, train_examples=35000 - starting
+[17/50] exp 036: done
+[18/50] exp 037: n_points=20, train_examples=40000 - starting
+[18/50] exp 037: done
+[19/50] exp 038: n_points=20, train_examples=45000 - starting
+[19/50] exp 038: done
+[20/50] exp 039: n_points=20, train_examples=50000 - starting
+[20/50] exp 039: done
+[21/50] exp 040: n_points=50, train_examples=5000 - starting
+[21/50] exp 040: done
+[22/50] exp 041: n_points=50, train_examples=10000 - starting
+[22/50] exp 041: done
+[23/50] exp 042: n_points=50, train_examples=15000 - starting
+[23/50] exp 042: done
+[24/50] exp 043: n_points=50, train_examples=20000 - starting
+[24/50] exp 043: done
+[25/50] exp 044: n_points=50, train_examples=25000 - starting
+[25/50] exp 044: done
+[26/50] exp 045: n_points=50, train_examples=30000 - starting
+[26/50] exp 045: done
+[27/50] exp 046: n_points=50, train_examples=35000 - starting
+[27/50] exp 046: done
+[28/50] exp 047: n_points=50, train_examples=40000 - starting
+[28/50] exp 047: done
+[29/50] exp 048: n_points=50, train_examples=45000 - starting
+[29/50] exp 048: done
+[30/50] exp 049: n_points=50, train_examples=50000 - starting
+[30/50] exp 049: done
+[31/50] exp 050: n_points=100, train_examples=5000 - starting
+[31/50] exp 050: done
+[32/50] exp 051: n_points=100, train_examples=10000 - starting
+[32/50] exp 051: done
+[33/50] exp 052: n_points=100, train_examples=15000 - starting
+[33/50] exp 052: done
+[34/50] exp 053: n_points=100, train_examples=20000 - starting
+[34/50] exp 053: done
+[35/50] exp 054: n_points=100, train_examples=25000 - starting
+[35/50] exp 054: done
+[36/50] exp 055: n_points=100, train_examples=30000 - starting
+[36/50] exp 055: done
+[37/50] exp 056: n_points=100, train_examples=35000 - starting
+[37/50] exp 056: done
+[38/50] exp 057: n_points=100, train_examples=40000 - starting
+[38/50] exp 057: done
+[39/50] exp 058: n_points=100, train_examples=45000 - starting
+[39/50] exp 058: done
+[40/50] exp 059: n_points=100, train_examples=50000 - starting
+[40/50] exp 059: done
+[41/50] exp 060: n_points=800, train_examples=5000 - starting
+[41/50] exp 060: done
+[42/50] exp 061: n_points=800, train_examples=10000 - starting
+[42/50] exp 061: done
+[43/50] exp 062: n_points=800, train_examples=15000 - starting
+[43/50] exp 062: done
+[44/50] exp 063: n_points=800, train_examples=20000 - starting
+[44/50] exp 063: done
+[45/50] exp 064: n_points=800, train_examples=25000 - starting
+[45/50] exp 064: done
+[46/50] exp 065: n_points=800, train_examples=30000 - starting
+[46/50] exp 065: done
+[47/50] exp 066: n_points=800, train_examples=35000 - starting
+[47/50] exp 066: done
+[48/50] exp 067: n_points=800, train_examples=40000 - starting
+[48/50] exp 067: done
+[49/50] exp 068: n_points=800, train_examples=45000 - starting
+[49/50] exp 068: done
+[50/50] exp 069: n_points=800, train_examples=50000 - starting
+[50/50] exp 069: done
+Grid sweep complete.

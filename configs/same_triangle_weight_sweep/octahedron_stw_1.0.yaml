@@ -1,0 +1,36 @@
+# same_triangle_weight sweep, point 1.0: same setup as
+# ../octahedron_distance_same_triangle.yaml (800 points, emb_dim=32,
+# tasks: [distance, same_triangle]) but training.steps cut to 20000 (a
+# shared, shorter budget across the whole sweep - see
+# experiments/manifold_learning/octahedron/EXPERIMENTS.md 076's next-steps
+# note) and training.same_triangle_weight set to 1.0 (distance_weight
+# stays at its default of 1.0).
+#
+# Run with:
+#   python -m src.train_manifold configs/same_triangle_weight_sweep/octahedron_stw_1.0.yaml
+
+manifold:
+  name: octahedron
+  n_points: 800
+  seed: 0
+
+model:
+  emb_dim: 32
+  hidden_dim: 128
+  num_heads: 4
+  num_layers: 2
+  dropout: 0.0
+  normalize_embeddings: false
+
+training:
+  tasks: [distance, same_triangle]
+  train_examples: 50000
+  batch_size: 256
+  steps: 20000
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-4
+  seed: 0
+  progress_interval: 500
+  test_fraction: 0.1
+  same_triangle_weight: 1.0
+  # distance_weight omitted - defaults to 1.0

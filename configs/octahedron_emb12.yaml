@@ -1,0 +1,30 @@
+# Distance-only transformer training on the octahedron manifold - part of
+# the emb_dim sweep proposed in experiment 006's next steps
+# (experiments/manifold_learning/octahedron/EXPERIMENTS.md): does some width
+# between 8 (octahedron_small_emb.yaml) and 32 (octahedron_long.yaml) reach a
+# low intrinsic dimension without as large a hit to R²/Spearman/NN-recall?
+#
+# Run with:
+#   python -m src.train_manifold configs/octahedron_emb12.yaml
+
+manifold:
+  name: octahedron       # looked up via manifolds.get_manifold()
+  n_points: 800           # manifolds/README.md's recommended default
+  seed: 0
+
+model:
+  emb_dim: 12             # sweep point between 8 and 32
+  hidden_dim: 128
+  num_heads: 4
+  num_layers: 2
+  dropout: 0.0
+  normalize_embeddings: false
+
+training:
+  train_examples: 50000
+  batch_size: 256
+  steps: 50000
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-4
+  seed: 0
+  progress_interval: 500  # steps between embedding-quality snapshots; 0 disables

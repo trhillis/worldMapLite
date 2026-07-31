@@ -1,0 +1,34 @@
+# Multi-task transformer training on the octahedron manifold: distance +
+# same_triangle together, full size (same n_points/steps as
+# octahedron_default.yaml / octahedron_same_triangle.yaml, so results are
+# directly comparable across all three). Compare the resulting embedding
+# (embedding_pca.png) against the distance-only and same_triangle-only
+# runs to see whether combining tasks changes what geometry emerges.
+#
+# Run with:
+#   python -m src.train_manifold configs/octahedron_distance_same_triangle.yaml
+
+manifold:
+  name: octahedron
+  n_points: 800
+  seed: 0
+
+model:
+  emb_dim: 32
+  hidden_dim: 128
+  num_heads: 4
+  num_layers: 2
+  dropout: 0.0
+  normalize_embeddings: false
+
+training:
+  tasks: [distance, same_triangle]
+  train_examples: 50000
+  batch_size: 256
+  steps: 10000
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-4
+  seed: 0
+  progress_interval: 500  # steps between embedding-quality snapshots; 0 disables
+  test_fraction: 0.1  # fraction of all C(n_points, 2) pairs reserved as a held-out generalization check
+  # distance_weight / same_triangle_weight omitted - both default to 1.0

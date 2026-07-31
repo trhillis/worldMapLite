@@ -1,0 +1,30 @@
+# Tiny smoke-test config for the same_triangle-only task: confirms the
+# multi-task-capable pipeline runs end-to-end with a non-distance task and
+# loss decreases, before committing to the full-size run
+# (octahedron_same_triangle.yaml).
+#
+# Run with:
+#   python -m src.train_manifold configs/octahedron_same_triangle_smoke.yaml
+
+manifold:
+  name: octahedron
+  n_points: 50
+  seed: 0
+
+model:
+  emb_dim: 32
+  hidden_dim: 128
+  num_heads: 4
+  num_layers: 2
+  dropout: 0.0
+  normalize_embeddings: false
+
+training:
+  tasks: [same_triangle]
+  train_examples: 2000
+  batch_size: 64
+  steps: 500
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-4
+  seed: 0
+  progress_interval: 100  # steps between embedding-quality snapshots; 0 disables

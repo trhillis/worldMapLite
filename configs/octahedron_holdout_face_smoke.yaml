@@ -1,0 +1,45 @@
+# Face-localized variant of octahedron_holdout_smoke.yaml: holdout points
+# are restricted to a single octahedron face (one "triangle side") rather
+# than scattered uniformly at random, via points_on_faces. This is what
+# lets the recovered points be visually checked against their true local
+# neighborhood in analysis_manifold.py's PCA plots (embedding_pca.png /
+# true_manifold_pca.png), instead of being spread arbitrarily.
+#
+# At n_points=50, seed=0, face 0 has 7 sampled points - comfortably more
+# than n_holdout_points=3 below. This is seed/sample-dependent (World
+# points are sampled, not evenly distributed across faces); if you change
+# n_points or seed, re-check the per-face count (e.g. via
+# manifolds.octahedron() + src.worlds.make_manifold_world +
+# src.datasets.points_on_faces) before raising n_holdout_points, or
+# split_points will raise a clear ValueError instead of silently
+# misbehaving.
+#
+# Run with:
+#   python -m src.train_manifold configs/octahedron_holdout_face_smoke.yaml
+
+manifold:
+  name: octahedron
+  n_points: 50
+  seed: 0
+
+model:
+  emb_dim: 32
+  hidden_dim: 128
+  num_heads: 4
+  num_layers: 2
+  dropout: 0.0
+  normalize_embeddings: false
+
+training:
+  train_examples: 2000
+  batch_size: 64
+  steps: 500
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-4
+  seed: 0
+  progress_interval: 100
+  n_holdout_points: 3
+  n_probes: 3
+  probe_steps: 100
+  probe_lr: 0.05
+  holdout_faces: [0]

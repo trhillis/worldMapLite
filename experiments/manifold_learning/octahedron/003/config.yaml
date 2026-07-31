@@ -1,0 +1,19 @@
+manifold:
+  name: octahedron
+  n_points: 50
+  seed: 0
+model:
+  emb_dim: 32
+  hidden_dim: 128
+  num_heads: 4
+  num_layers: 2
+  dropout: 0.0
+  normalize_embeddings: false
+training:
+  train_examples: 2000
+  batch_size: 64
+  steps: 500
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  seed: 0
+  progress_interval: 100
