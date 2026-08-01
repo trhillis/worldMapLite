@@ -45,6 +45,37 @@ class World:
 
     ambient_coordinates: np.ndarray | None = None
 
+
+def subset_world(world: World, point_indices) -> World:
+    """Return a compact view of selected entities with original ids recorded."""
+
+    point_indices = np.asarray(point_indices, dtype=np.int64)
+    if point_indices.ndim != 1 or len(np.unique(point_indices)) != len(point_indices):
+        raise ValueError("point_indices must be a one-dimensional unique array")
+    if np.any((point_indices < 0) | (point_indices >= len(world.names))):
+        raise ValueError("point_indices contain an out-of-range entity")
+
+    original_to_local = {int(original): local for local, original in enumerate(point_indices)}
+    edges = [
+        (original_to_local[a], original_to_local[b])
+        for a, b in world.edges
+        if a in original_to_local and b in original_to_local
+    ]
+    meta = dict(world.meta)
+    meta["original_point_ids"] = point_indices.tolist()
+    meta["full_num_points"] = len(world.names)
+    return World(
+        names=[world.names[index] for index in point_indices],
+        coordinates=np.asarray(world.coordinates)[point_indices],
+        edges=edges,
+        meta=meta,
+        manifold=world.manifold,
+        ambient_coordinates=(
+            np.asarray(world.ambient_coordinates)[point_indices]
+            if world.ambient_coordinates is not None else None
+        ),
+    )
+
 def make_grid(width=10, height=10) -> World:
     """
     Create a rectangular two-dimensional grid.

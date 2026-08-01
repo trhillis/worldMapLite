@@ -8,6 +8,7 @@ import torch
 import matplotlib.pyplot as plt
 
 import json
+import hashlib
 import pandas as pd
 
 from sklearn.decomposition import PCA
@@ -19,7 +20,7 @@ from sklearn.model_selection import KFold
 from scipy.stats import spearmanr
 from skdim.id import TwoNN
 
-from src.worlds import make_grid, make_manifold_world
+from src.worlds import make_grid, make_manifold_world, subset_world
 
 from manifolds.flat_torus import FlatTorus
 from manifolds.mobius import FlatMobiusStrip
@@ -164,9 +165,13 @@ def true_world_distance_matrix(
     Load or compute the complete true-distance matrix.
     """
 
+    point_ids = world.meta.get("original_point_ids", range(len(world.names)))
+    point_digest = hashlib.sha256(
+        np.asarray(list(point_ids), dtype=np.int64).tobytes()
+    ).hexdigest()[:10]
     cache_path = (
         CACHE_DIR
-        / f"{world_name}_seed{seed}.npy"
+        / f"{world_name}_seed{seed}_n{len(world.names)}_{point_digest}.npy"
     )
 
     if cache_path.exists():
@@ -1271,8 +1276,10 @@ def analyze_checkpoint(
     )
 
     distance_pair_seed = cfg.get(
-        "distance_pair_seed"
+        "pair_split_seed"
     )
+    if distance_pair_seed is None:
+        distance_pair_seed = cfg.get("distance_pair_seed")
 
     training_step = int(
         checkpoint.get(
@@ -1285,6 +1292,13 @@ def analyze_checkpoint(
         f"{world_name}_pairs{relation_budget}_pairseed"
         f"{distance_pair_seed}_seed{seed}"
     )
+    if cfg.get("held_out_points", 0) or cfg.get("held_out_point_fraction"):
+        amount = (
+            f"frac{cfg['held_out_point_fraction']:g}"
+            if cfg.get("held_out_point_fraction") is not None
+            else str(cfg.get("held_out_points", 0))
+        )
+        run_name += f"_pointholdout{amount}_pointseed{cfg.get('held_out_point_seed', 0)}"
 
     if (
         f"_step{training_step}_model"
@@ -1306,6 +1320,10 @@ def analyze_checkpoint(
     world = build_world_from_config(
         cfg
     )
+
+    point_split = checkpoint.get("point_split")
+    if point_split and point_split.get("retained_points") is not None:
+        world = subset_world(world, point_split["retained_points"])
 
     # Prefer exact saved coordinates when checkpoints contain them.
     if "world_coordinates" in checkpoint:
@@ -1422,14 +1440,29 @@ def analyze_checkpoint(
         )
     )
 
-    prediction_results = (
-        sampled_prediction_metrics(
+    history = checkpoint.get("evaluation", {}).get("distance_history", [])
+    exact_entry = next(
+        (entry for entry in reversed(history) if int(entry["step"]) == training_step),
+        history[-1] if history else None,
+    )
+    if exact_entry is not None:
+        held = exact_entry["held_out"]
+        trained = exact_entry["train"]
+        prediction_results = {
+            "prediction_mae": held["normalized_mae"],
+            "prediction_rmse": held["normalized_rmse"],
+            "prediction_pearson": held.get("pearson", float("nan")),
+            "prediction_spearman": held["spearman"],
+            **{f"held_out_pair_{key}": value for key, value in held.items()},
+            **{f"training_pair_{key}": value for key, value in trained.items()},
+        }
+    else:
+        prediction_results = sampled_prediction_metrics(
             model=model,
             world=world,
             n_pairs=DISTANCE_SAMPLE_SIZE,
             seed=EVALUATION_SEED,
         )
-    )
 
     true_distance_matrix = (
         true_world_distance_matrix(
@@ -1601,6 +1634,19 @@ def analyze_checkpoint(
         "seed": seed,
         "relation_budget": relation_budget,
         "distance_pair_seed": distance_pair_seed,
+        "pair_split_seed": cfg.get("pair_split_seed", distance_pair_seed),
+        "world_seed": cfg.get("world_seed") if cfg.get("world_seed") is not None else seed,
+        "data_order_seed": cfg.get("data_order_seed") if cfg.get("data_order_seed") is not None else seed,
+        "held_out_point_seed": cfg.get("held_out_point_seed"),
+        "pair_split_digest": (
+            checkpoint.get("pair_split") or {}
+        ).get("split_digest"),
+        "held_out_pair_digest": (
+            checkpoint.get("pair_split") or {}
+        ).get("held_out_pair_digest"),
+        "point_split_digest": (
+            checkpoint.get("point_split") or {}
+        ).get("point_split_digest"),
         "training_step": training_step,
         "num_points": num_points,
         "tasks": "_".join(tasks),

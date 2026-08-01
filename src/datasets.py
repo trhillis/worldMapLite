@@ -3,6 +3,7 @@ import numpy as np
 
 # Import ground-truth task functions.
 from src.tasks import distance, angle
+from src.splits import make_pair_split
 
 
 def build_grid_nearest_cache(world):
@@ -332,81 +333,21 @@ def make_disjoint_distance_splits(
     budgets contain every pair from smaller budgets.
     """
 
-    if (
-        not isinstance(n_train, (int, np.integer))
-        or isinstance(n_train, (bool, np.bool_))
-        or n_train <= 0
-    ):
-        raise ValueError(
-            "n_train must be a positive integer"
-        )
+    if not isinstance(n_eval, (int, np.integer)) or isinstance(n_eval, (bool, np.bool_)) or n_eval <= 0:
+        raise ValueError("n_eval must be a positive integer")
 
-    if (
-        not isinstance(n_eval, (int, np.integer))
-        or isinstance(n_eval, (bool, np.bool_))
-        or n_eval <= 0
-    ):
-        raise ValueError(
-            "n_eval must be a positive integer"
-        )
-
-    num_points = len(world.names)
-
-    if num_points < 2:
-        raise ValueError(
-            "At least two points are required to form a distance pair"
-        )
-
-    total_pairs = (
-        num_points * (num_points - 1) // 2
-    )
-    requested_pairs = n_train + n_eval
-
-    if requested_pairs > total_pairs:
-        raise ValueError(
-            f"Requested {n_train} training pairs and {n_eval} evaluation "
-            f"pairs, but only {total_pairs} unique pairs are available"
-        )
-
-    point_i, point_j = np.triu_indices(
-        num_points,
-        k=1,
-    )
-    rng = np.random.default_rng(seed)
-    ordering = rng.permutation(total_pairs)
-
-    evaluation_indices = ordering[:n_eval]
-    training_indices = ordering[
-        n_eval:n_eval + n_train
-    ]
-
-    evaluation_pairs = np.column_stack(
-        (
-            point_i[evaluation_indices],
-            point_j[evaluation_indices],
-        )
-    ).astype(
-        np.int64,
-        copy=False,
-    )
-    training_pairs = np.column_stack(
-        (
-            point_i[training_indices],
-            point_j[training_indices],
-        )
-    ).astype(
-        np.int64,
-        copy=False,
+    split = make_pair_split(
+        len(world.names), n_train, n_eval, seed=seed,
     )
 
     return (
         _make_distance_examples_from_pairs(
             world,
-            training_pairs,
+            split.train_pairs,
         ),
         _make_distance_examples_from_pairs(
             world,
-            evaluation_pairs,
+            split.held_out_pairs,
         ),
     )
 

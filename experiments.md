@@ -53,7 +53,12 @@ The analysis already calculates the main metrics needed for the study:
 
 The pilot experiments confirmed that the full training, checkpointing, evaluation, and analysis pipeline works for all three topologies.
 
-No additional coding is required before beginning the experiments.
+The supervision-budget extensions now add fixed pair splits, configurable
+checkpoint schedules, and a separate held-out-point recovery protocol. These
+are controls for the existing research question, not an expansion into model
+architecture or optimizer search. Use `configs/supervision_sweep.json` as the
+canonical configurable sweep example and keep all split/world seeds fixed
+across model seeds.
 
 ---
 

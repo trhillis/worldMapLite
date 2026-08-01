@@ -6,6 +6,8 @@ sys.path.append(str(project_root))
 # dataclass makes it convenient to define a training-configuration object.
 from dataclasses import dataclass
 import argparse
+import csv
+import json
 
 # os is used to create the output directory.
 import os
@@ -27,17 +29,24 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 
 # Create the experimental grid world.
-from src.worlds import make_grid, make_manifold_world
+from src.worlds import make_grid, make_manifold_world, subset_world
 from manifolds.mobius import FlatMobiusStrip
 from manifolds.polyhedra import octahedron
+from manifolds.flat_torus import FlatTorus
 
 # Import task-specific dataset generators and utilities.
 from src.datasets import (
-    make_disjoint_distance_splits,
+    _make_distance_examples_from_pairs,
     distance_scale,
     make_nearest_examples,
     build_nearest_and_negative_cache,
 )
+from src.evaluation import (
+    evaluate_distance_examples,
+    representation_metrics,
+)
+from src.point_recovery import recover_held_out_points
+from src.splits import make_pair_split, make_point_split
 
 # Import the shared-embedding multitask model.
 from src.multitask_model import MultiTaskWorldModel
@@ -95,6 +104,15 @@ class TrainConfig:
     # Keeping this fixed makes pair-budget conditions nested and comparable.
     distance_pair_seed: int = 0
 
+    # Alias with clearer experimental meaning. None preserves old configs.
+    pair_split_seed: int | None = None
+
+    # Separating this from model seed fixes sampled worlds across model seeds.
+    world_seed: int | None = None
+
+    # Fixed shuffle stream for comparable runs; None preserves legacy behavior.
+    data_order_seed: int | None = None
+
     # Number of fixed held-out distance relations used for evaluation.
     val_examples_per_task: int = 5_000
 
@@ -109,6 +127,22 @@ class TrainConfig:
 
     # Optional frequency for saving resumable intermediate checkpoints.
     checkpoint_every: int | None = None
+
+    # Exact optimizer updates at which one uninterrupted run is evaluated.
+    # None retains the legacy eval_every behavior.
+    evaluation_checkpoints: tuple[int, ...] | None = None
+
+    # Optional unseen-entity protocol. Both count and fraction default off.
+    held_out_points: int = 0
+    held_out_point_fraction: float | None = None
+    held_out_point_seed: int = 0
+    recovery_anchor_counts: tuple[int, ...] = ()
+    recovery_steps: int = 200
+    recovery_learning_rate: float = 0.05
+    recovery_seed: int = 0
+
+    # Tidy per-run tables are written beneath this directory.
+    results_dir: str = "results"
 
     # AdamW learning rate.
     learning_rate: float = 1e-3
@@ -210,102 +244,41 @@ def evaluate_distance(
     device,
     batch_size,
 ):
-    """Evaluate normalized predictions and raw distance errors."""
+    """Backward-compatible public wrapper around shared evaluation."""
 
-    if not examples:
-        raise ValueError(
-            "Distance evaluation requires at least one example"
-        )
-
-    loader = DataLoader(
-        PairDataset(examples),
-        batch_size=batch_size,
-        shuffle=False,
-    )
-    predictions = []
-    targets = []
-    was_training = model.training
-
-    model.eval()
-
-    try:
-        with torch.inference_mode():
-            for point_i, point_j, target in loader:
-                prediction = model.forward_distance(
-                    point_i.to(device),
-                    point_j.to(device),
-                )
-                predictions.append(
-                    prediction.detach().cpu()
-                )
-                targets.append(target)
-    finally:
-        model.train(was_training)
-
-    prediction = torch.cat(predictions).numpy()
-    target = torch.cat(targets).numpy()
-    errors = prediction - target
-    normalized_mae = float(
-        np.abs(errors).mean()
-    )
-    normalized_rmse = float(
-        np.sqrt(np.square(errors).mean())
-    )
-    residual_sum = float(
-        np.square(errors).sum()
-    )
-    total_sum = float(
-        np.square(target - target.mean()).sum()
-    )
-
-    r2 = (
-        float(1.0 - residual_sum / total_sum)
-        if total_sum > 0.0
-        else float("nan")
-    )
-    spearman = (
-        float(spearmanr(target, prediction).statistic)
-        if (
-            len(target) > 1
-            and np.ptp(target) > 0.0
-            and np.ptp(prediction) > 0.0
-        )
-        else float("nan")
-    )
-
-    return {
-        "n_examples": len(target),
-        "normalized_mae": normalized_mae,
-        "normalized_rmse": normalized_rmse,
-        "mae": normalized_mae * scale,
-        "rmse": normalized_rmse * scale,
-        "r2": r2,
-        "spearman": spearman,
-    }
+    return evaluate_distance_examples(model, examples, scale, device, batch_size)
 
 
 def checkpoint_task_name(cfg):
     """Return the stable experiment identifier used in checkpoint names."""
 
     task_name = "_".join(cfg.tasks)
+    pair_seed = (
+        cfg.distance_pair_seed if cfg.pair_split_seed is None else cfg.pair_split_seed
+    )
 
     if cfg.world_type == "grid":
-        return (
+        name = (
             f"grid_{task_name}_pairs"
             f"{cfg.train_examples_per_task}_pairseed"
-            f"{cfg.distance_pair_seed}_seed{cfg.seed}"
+            f"{pair_seed}_seed{cfg.seed}"
         )
-
-    if cfg.world_type == "manifold":
-        return (
+    elif cfg.world_type == "manifold":
+        name = (
             f"{cfg.manifold}_{task_name}_pairs"
             f"{cfg.train_examples_per_task}_pairseed"
-            f"{cfg.distance_pair_seed}_seed{cfg.seed}"
+            f"{pair_seed}_seed{cfg.seed}"
         )
-
-    raise ValueError(
-        f"Unknown world type: {cfg.world_type}"
-    )
+    else:
+        raise ValueError(f"Unknown world type: {cfg.world_type}")
+    if cfg.held_out_points or cfg.held_out_point_fraction:
+        amount = (
+            f"frac{cfg.held_out_point_fraction:g}"
+            if cfg.held_out_point_fraction is not None
+            else str(cfg.held_out_points)
+        )
+        name += f"_pointholdout{amount}_pointseed{cfg.held_out_point_seed}"
+    return name
 
 
 def save_training_checkpoint(
@@ -318,6 +291,9 @@ def save_training_checkpoint(
     distance_history,
     step,
     periodic=False,
+    pair_split=None,
+    point_split=None,
+    recovery=None,
 ):
     """Save the current training state using the established schema."""
 
@@ -348,9 +324,8 @@ def save_training_checkpoint(
             "world_meta": world.meta,
             "distance_train_pairs": (
                 torch.tensor(
-                    [
-                        example["indices"]
-                        for example in distance_train
+                    pair_split.train_pairs if pair_split is not None else [
+                        example["indices"] for example in distance_train
                     ],
                     dtype=torch.long,
                 )
@@ -359,9 +334,8 @@ def save_training_checkpoint(
             ),
             "distance_eval_pairs": (
                 torch.tensor(
-                    [
-                        example["indices"]
-                        for example in distance_eval
+                    pair_split.held_out_pairs if pair_split is not None else [
+                        example["indices"] for example in distance_eval
                     ],
                     dtype=torch.long,
                 )
@@ -371,7 +345,19 @@ def save_training_checkpoint(
             "evaluation": {
                 "distance_final": distance_metrics,
                 "distance_history": distance_history,
+                "held_out_point_recovery": recovery,
             },
+            "pair_split": (
+                {
+                    **pair_split.metadata(),
+                    "training_pairs": pair_split.train_pairs.tolist(),
+                    "held_out_pairs": pair_split.held_out_pairs.tolist(),
+                }
+                if pair_split is not None else None
+            ),
+            "point_split": (
+                point_split.metadata() if point_split is not None else None
+            ),
             "world_coordinates": np.asarray(
                 world.coordinates
             ),
@@ -393,6 +379,58 @@ def save_training_checkpoint(
     return save_path
 
 
+def _remap_examples(examples, original_to_local):
+    remapped = []
+    for example in examples:
+        copied = dict(example)
+        copied["indices"] = tuple(
+            original_to_local[int(point)] for point in example["indices"]
+        )
+        remapped.append(copied)
+    return remapped
+
+
+def _flatten_evaluation_row(cfg, world_name, step, train_metrics, held_out_metrics, rep_metrics, pair_split, point_split):
+    row = {
+        "world": world_name,
+        "supervision_budget": cfg.train_examples_per_task,
+        "checkpoint": step,
+        "optimizer_updates": step,
+        "model_seed": cfg.seed,
+        "world_seed": cfg.world_seed if cfg.world_seed is not None else cfg.seed,
+        "data_order_seed": cfg.data_order_seed if cfg.data_order_seed is not None else cfg.seed,
+        "pair_split_seed": pair_split.seed,
+        "held_out_point_seed": point_split.seed,
+        "held_out_point_count": len(point_split.held_out_points),
+        "evaluation_protocol": (
+            "held_out_points" if len(point_split.held_out_points) else "held_out_pairs"
+        ),
+        "recovery_anchor_count": None,
+        "pair_split_digest": pair_split.digest,
+        "held_out_pair_digest": pair_split.held_out_digest,
+        "point_split_digest": point_split.digest,
+    }
+    row.update({f"training_pair_{key}": value for key, value in train_metrics.items()})
+    row.update({f"held_out_pair_{key}": value for key, value in held_out_metrics.items()})
+    row.update(rep_metrics)
+    return row
+
+
+def _write_rows(path, rows):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if not rows:
+        return
+    keys = []
+    for row in rows:
+        for key in row:
+            if key not in keys:
+                keys.append(key)
+    with open(path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=keys)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def main(cfg=None):
     # Create a configuration object with the values defined above.
     if cfg is None:
@@ -411,6 +449,30 @@ def main(cfg=None):
             "checkpoint_every must be a positive integer or None"
         )
 
+    if cfg.steps <= 0:
+        raise ValueError("steps must be a positive integer")
+    if cfg.evaluation_checkpoints is not None:
+        evaluation_steps = tuple(sorted(set(cfg.evaluation_checkpoints)))
+        if not evaluation_steps or evaluation_steps[0] <= 0 or evaluation_steps[-1] > cfg.steps:
+            raise ValueError("evaluation_checkpoints must be positive and no greater than steps")
+    else:
+        evaluation_steps = None
+    if cfg.recovery_anchor_counts and not (cfg.held_out_points or cfg.held_out_point_fraction):
+        raise ValueError("recovery anchors require held-out points")
+    if cfg.held_out_points and cfg.held_out_point_fraction is not None:
+        raise ValueError("set only one of held_out_points or held_out_point_fraction")
+    if cfg.recovery_anchor_counts and (
+        cfg.recovery_steps <= 0
+        or cfg.recovery_learning_rate <= 0
+        or any(count <= 0 for count in cfg.recovery_anchor_counts)
+    ):
+        raise ValueError("recovery steps, learning rate, and anchor counts must be positive")
+    if (cfg.held_out_points or cfg.held_out_point_fraction) and tuple(cfg.tasks) != ("distance",):
+        raise ValueError("held-out-point recovery currently supports distance-only base training")
+
+    pair_seed = cfg.distance_pair_seed if cfg.pair_split_seed is None else cfg.pair_split_seed
+    world_seed = cfg.seed if cfg.world_seed is None else cfg.world_seed
+
     # Make the run reproducible.
     set_seed(cfg.seed)
 
@@ -424,9 +486,10 @@ def main(cfg=None):
 
     print(f"Using device: {device}")
 
-    # Create the underlying 20-by-20 grid.
+    # Build the full world once. A compact retained-point world is derived
+    # below when whole entities are held out.
     if cfg.world_type == "grid":
-        world = make_grid(
+        full_world = make_grid(
             cfg.width,
             cfg.height,
         )
@@ -442,15 +505,18 @@ def main(cfg=None):
         elif cfg.manifold == "octahedron":
            manifold = octahedron()
 
+        elif cfg.manifold == "torus":
+            manifold = FlatTorus()
+
         else:
             raise ValueError(
                 f"Unknown manifold: {cfg.manifold}"
             )
 
-        world = make_manifold_world(
+        full_world = make_manifold_world(
             manifold,
             n=cfg.manifold_points,
-            seed=cfg.seed,
+            seed=world_seed,
             diameter=np.pi,
         )
 
@@ -458,6 +524,14 @@ def main(cfg=None):
         raise ValueError(
             f"Unknown world type: {cfg.world_type}"
         )
+
+    point_split = make_point_split(
+        len(full_world.names),
+        n_held_out=(None if cfg.held_out_point_fraction is not None else cfg.held_out_points),
+        held_out_fraction=cfg.held_out_point_fraction,
+        seed=cfg.held_out_point_seed,
+    )
+    world = subset_world(full_world, point_split.retained_points)
     # These are only necessary when training the nearest task.
     nearest_cache = None
     negative_cache = None
@@ -476,6 +550,7 @@ def main(cfg=None):
     nearest_iterator = None
     distance_train = None
     distance_eval = None
+    pair_split = None
 
     if "distance" in cfg.tasks:
         print(
@@ -483,19 +558,30 @@ def main(cfg=None):
             "distance pairs..."
         )
 
-        distance_train, distance_eval = (
-            make_disjoint_distance_splits(
-                world,
-                n_train=cfg.train_examples_per_task,
-                n_eval=cfg.val_examples_per_task,
-                seed=cfg.distance_pair_seed,
-            )
+        pair_split = make_pair_split(
+            len(full_world.names),
+            n_train=cfg.train_examples_per_task,
+            n_held_out=cfg.val_examples_per_task,
+            seed=pair_seed,
+            excluded_points=point_split.held_out_points,
         )
+        original_train = _make_distance_examples_from_pairs(
+            full_world, pair_split.train_pairs,
+        )
+        original_eval = _make_distance_examples_from_pairs(
+            full_world, pair_split.held_out_pairs,
+        )
+        original_to_local = {
+            int(original): local
+            for local, original in enumerate(point_split.retained_points)
+        }
+        distance_train = _remap_examples(original_train, original_to_local)
+        distance_eval = _remap_examples(original_eval, original_to_local)
 
         print(
             f"Using {len(distance_train):,} training pairs and "
             f"{len(distance_eval):,} fixed held-out pairs "
-            f"(pair seed {cfg.distance_pair_seed})"
+            f"(pair seed {pair_seed}, split {pair_split.digest[:12]})"
         )
 
         # Convert the examples into shuffled minibatches.
@@ -504,6 +590,9 @@ def main(cfg=None):
             batch_size=cfg.batch_size,
             shuffle=True,
             drop_last=False,
+            generator=torch.Generator().manual_seed(
+                cfg.seed if cfg.data_order_seed is None else cfg.data_order_seed
+            ),
         )
 
         # Turn the DataLoader into an endless stream of batches.
@@ -531,6 +620,9 @@ def main(cfg=None):
             batch_size=cfg.batch_size,
             shuffle=True,
             drop_last=True,
+            generator=torch.Generator().manual_seed(
+                cfg.seed if cfg.data_order_seed is None else cfg.data_order_seed
+            ),
         )
 
         # Turn the DataLoader into an endless stream of batches.
@@ -556,6 +648,8 @@ def main(cfg=None):
     )
 
     distance_history = []
+    learning_curve_rows = []
+    world_name = "grid" if cfg.world_type == "grid" else cfg.manifold
 
     # Perform the requested number of optimizer updates.
     for step in range(1, cfg.steps + 1):
@@ -644,14 +738,12 @@ def main(cfg=None):
         # Update the model parameters.
         optimizer.step()
 
-        if (
-            "distance" in cfg.tasks
-            and (
-                step == 1
-                or step % cfg.eval_every == 0
-                or step == cfg.steps
-            )
-        ):
+        should_evaluate = (
+            step in evaluation_steps
+            if evaluation_steps is not None
+            else (step == 1 or step % cfg.eval_every == 0 or step == cfg.steps)
+        )
+        if "distance" in cfg.tasks and should_evaluate:
             scale = distance_scale(world)
             train_metrics = evaluate_distance(
                 model=model,
@@ -671,10 +763,17 @@ def main(cfg=None):
                 "step": step,
                 "train": train_metrics,
                 "held_out": held_out_metrics,
+                "representation": representation_metrics(
+                    model, world, seed=cfg.seed,
+                ),
             }
             distance_history.append(
                 history_entry
             )
+            learning_curve_rows.append(_flatten_evaluation_row(
+                cfg, world_name, step, train_metrics, held_out_metrics,
+                history_entry["representation"], pair_split, point_split,
+            ))
 
             print(
                 f"eval step={step:6d} "
@@ -704,8 +803,10 @@ def main(cfg=None):
             print(" ".join(parts))
 
         if (
-            cfg.checkpoint_every is not None
-            and step % cfg.checkpoint_every == 0
+            (
+                (cfg.checkpoint_every is not None and step % cfg.checkpoint_every == 0)
+                or (evaluation_steps is not None and step in evaluation_steps)
+            )
             and step != cfg.steps
         ):
             save_training_checkpoint(
@@ -718,6 +819,8 @@ def main(cfg=None):
                 distance_history=distance_history,
                 step=step,
                 periodic=True,
+                pair_split=pair_split,
+                point_split=point_split,
             )
 
     distance_metrics = (
@@ -744,7 +847,58 @@ def main(cfg=None):
             f"Spearman={distance_metrics['spearman']:.4f}"
         )
 
-    save_training_checkpoint(
+    run_name = checkpoint_task_name(cfg)
+    learning_curve_path = os.path.join(
+        cfg.results_dir, "learning_curves", f"{run_name}.csv",
+    )
+    _write_rows(learning_curve_path, learning_curve_rows)
+
+    recovery_results = None
+    recovery_rows = []
+    if len(point_split.held_out_points) and cfg.recovery_anchor_counts:
+        recovery_results = {}
+        for anchor_count in cfg.recovery_anchor_counts:
+            result = recover_held_out_points(
+                model=model,
+                full_world=full_world,
+                retained_point_ids=point_split.retained_points,
+                held_out_point_ids=point_split.held_out_points,
+                anchor_count=anchor_count,
+                steps=cfg.recovery_steps,
+                learning_rate=cfg.recovery_learning_rate,
+                seed=cfg.recovery_seed,
+                device=device,
+            )
+            recovery_results[str(anchor_count)] = result
+            for row in result["rows"]:
+                recovery_rows.append({
+                    "world": world_name,
+                    "supervision_budget": cfg.train_examples_per_task,
+                    "checkpoint": cfg.steps,
+                    "optimizer_updates": cfg.steps,
+                    "model_seed": cfg.seed,
+                    "world_seed": world_seed,
+                    "data_order_seed": cfg.data_order_seed if cfg.data_order_seed is not None else cfg.seed,
+                    "pair_split_seed": pair_seed,
+                    "held_out_point_seed": cfg.held_out_point_seed,
+                    "held_out_point_count": len(point_split.held_out_points),
+                    "evaluation_protocol": "held_out_points",
+                    "pair_split_digest": pair_split.digest,
+                    "held_out_pair_digest": pair_split.held_out_digest,
+                    "point_split_digest": point_split.digest,
+                    **row,
+                })
+        recovery_path = os.path.join(
+            cfg.results_dir, "recovery", f"{run_name}.csv",
+        )
+        _write_rows(recovery_path, recovery_rows)
+        metadata_path = os.path.join(
+            cfg.results_dir, "recovery", f"{run_name}.json",
+        )
+        with open(metadata_path, "w", encoding="utf-8") as handle:
+            json.dump(recovery_results, handle, indent=2, allow_nan=True)
+
+    checkpoint_path = save_training_checkpoint(
         model=model,
         optimizer=optimizer,
         cfg=cfg,
@@ -753,7 +907,15 @@ def main(cfg=None):
         distance_eval=distance_eval,
         distance_history=distance_history,
         step=cfg.steps,
+        pair_split=pair_split,
+        point_split=point_split,
+        recovery=recovery_results,
     )
+    return {
+        "checkpoint": checkpoint_path,
+        "learning_curve": learning_curve_path,
+        "recovery_rows": recovery_rows,
+    }
 
 
 # Run main only when this file is executed directly.
@@ -778,6 +940,24 @@ def parse_args():
         type=int,
         default=TrainConfig.distance_pair_seed,
         help="Seed for the shared shuffled ordering of distance pairs.",
+    )
+    parser.add_argument(
+        "--pair-split-seed",
+        type=int,
+        default=None,
+        help="Dedicated split seed; overrides the backward-compatible --pair-seed.",
+    )
+    parser.add_argument(
+        "--world-seed",
+        type=int,
+        default=None,
+        help="World sampling seed. Fix this while varying --seed.",
+    )
+    parser.add_argument(
+        "--data-order-seed",
+        type=int,
+        default=None,
+        help="Dedicated shuffled minibatch-order seed; fix across comparable runs.",
     )
     parser.add_argument(
         "--eval-pairs",
@@ -816,13 +996,32 @@ def parse_args():
         ),
     )
     parser.add_argument(
+        "--evaluation-checkpoints",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Exact optimizer updates to evaluate and checkpoint in one run.",
+    )
+    parser.add_argument("--held-out-points", type=int, default=0)
+    parser.add_argument("--held-out-point-fraction", type=float, default=None)
+    parser.add_argument("--held-out-point-seed", type=int, default=0)
+    parser.add_argument("--recovery-anchor-counts", type=int, nargs="+", default=())
+    parser.add_argument("--recovery-steps", type=int, default=TrainConfig.recovery_steps)
+    parser.add_argument("--recovery-learning-rate", type=float, default=TrainConfig.recovery_learning_rate)
+    parser.add_argument("--recovery-seed", type=int, default=TrainConfig.recovery_seed)
+    parser.add_argument("--results-dir", default=TrainConfig.results_dir)
+    parser.add_argument("--width", type=int, default=TrainConfig.width)
+    parser.add_argument("--height", type=int, default=TrainConfig.height)
+    parser.add_argument("--manifold-points", type=int, default=TrainConfig.manifold_points)
+    parser.add_argument("--batch-size", type=int, default=TrainConfig.batch_size)
+    parser.add_argument(
         "--world-type",
         choices=("grid", "manifold"),
         default=TrainConfig.world_type,
     )
     parser.add_argument(
         "--manifold",
-        choices=("mobius", "octahedron"),
+        choices=("mobius", "octahedron", "torus"),
         default=TrainConfig.manifold,
     )
 
@@ -835,12 +1034,31 @@ if __name__ == "__main__":
         TrainConfig(
             train_examples_per_task=args.distance_pairs,
             distance_pair_seed=args.pair_seed,
+            pair_split_seed=args.pair_split_seed,
+            world_seed=args.world_seed,
+            data_order_seed=args.data_order_seed,
             val_examples_per_task=args.eval_pairs,
             eval_every=args.eval_every,
             seed=args.seed,
             steps=args.steps,
             checkpoint_every=args.checkpoint_every,
+            evaluation_checkpoints=(
+                tuple(args.evaluation_checkpoints)
+                if args.evaluation_checkpoints is not None else None
+            ),
+            held_out_points=args.held_out_points,
+            held_out_point_fraction=args.held_out_point_fraction,
+            held_out_point_seed=args.held_out_point_seed,
+            recovery_anchor_counts=tuple(args.recovery_anchor_counts),
+            recovery_steps=args.recovery_steps,
+            recovery_learning_rate=args.recovery_learning_rate,
+            recovery_seed=args.recovery_seed,
+            results_dir=args.results_dir,
             world_type=args.world_type,
             manifold=args.manifold,
+            width=args.width,
+            height=args.height,
+            manifold_points=args.manifold_points,
+            batch_size=args.batch_size,
         )
     )

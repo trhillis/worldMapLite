@@ -224,8 +224,22 @@ class MultiTaskWorldModel(nn.Module):
         # Look up embeddings for the second point in every pair.
         embedding_j = self.encode(j)
 
+        return self.pair_representation_from_embeddings(
+            embedding_i,
+            embedding_j,
+            task_token,
+        )
+
+    def pair_representation_from_embeddings(
+        self,
+        embedding_i,
+        embedding_j,
+        task_token,
+    ):
+        """Build a pair representation from explicit entity embeddings."""
+
         # Read the current batch size.
-        batch_size = i.shape[0]
+        batch_size = embedding_i.shape[0]
 
         # Copy the learned task token once for every example.
         #
@@ -289,6 +303,19 @@ class MultiTaskWorldModel(nn.Module):
         )
 
         # Run the representation through the distance-specific head.
+        return self.distance_head(pair)
+
+    def forward_distance_from_embeddings(self, embedding_i, embedding_j):
+        """Predict distance while allowing a standalone recovered embedding."""
+
+        if self.normalize_embeddings:
+            embedding_i = F.normalize(embedding_i, dim=-1)
+            embedding_j = F.normalize(embedding_j, dim=-1)
+        pair = self.pair_representation_from_embeddings(
+            embedding_i,
+            embedding_j,
+            self.distance_token,
+        )
         return self.distance_head(pair)
 
     def forward_nearest(self, i, j):

@@ -88,7 +88,7 @@ class FlatTorus(Manifold):
 
     def _sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
         """Uniform on [0, 2 pi)^2 - exactly Riemannian-uniform here."""
-        raise NotImplementedError
+        return rng.uniform(0, TAU, (n, 2))
 
     def _distance(self, p: np.ndarray, q: np.ndarray) -> np.ndarray:
         """Nearest-image reduction into [-pi, pi] per coordinate, then norm.
@@ -96,8 +96,11 @@ class FlatTorus(Manifold):
         Fully vectorizable; no loop needed. Remember which reduction bug the
         module docstring warns about, and which test catches it.
         """
-        raise NotImplementedError
+        diff = p - q
+        diff -= TAU * np.round(diff / TAU)
+        return np.linalg.norm(diff, axis=1)
 
     def _embed(self, points: np.ndarray) -> np.ndarray:
         """Unscaled Clifford embedding (cos u, sin u, cos v, sin v) in R^4."""
-        raise NotImplementedError
+        u, v = points[:, 0], points[:, 1]
+        return np.column_stack((np.cos(u), np.sin(u), np.cos(v), np.sin(v)))

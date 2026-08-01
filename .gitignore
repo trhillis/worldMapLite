@@ -2,3 +2,4 @@ models/
 .vscode/
 __pycache__/
 analysis_results/
+results/

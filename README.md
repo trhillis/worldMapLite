@@ -151,6 +151,76 @@ python src/train_multitask.py \
 comparing budgets. `--seed` controls model randomness and, for sampled
 manifolds, world sampling.
 
+For multi-seed comparisons, prefer the explicit split controls:
+
+```bash
+python src/train_multitask.py \
+    --world-type grid --distance-pairs 1000 --eval-pairs 1000 \
+    --pair-split-seed 0 --world-seed 0 --data-order-seed 0 --seed 0
+```
+
+`--pair-seed` remains supported as a backward-compatible alias. When
+`--world-seed` is omitted, sampled manifold worlds retain the old behavior of
+using the model seed. Comparable manifold sweeps should set `--world-seed` so
+all model seeds see the same entities.
+
+## Evaluation protocols
+
+Held-out pairs and held-out points answer different questions:
+
+- **Held-out pairs** contain two known entities whose embeddings were trained
+  through other relations. They measure prediction generalization to an
+  unseen relation. One deterministic held-out set is reserved before the
+  nested training prefix, and leakage validation fails the run if any pair is
+  shared.
+- **Held-out points** are absent from the base model's embedding table and from
+  every base-training relation. After base training, a new vector is fitted
+  using a few distances to retained anchors while all model parameters remain
+  frozen. Disjoint retained anchors evaluate the recovered vector. Ground
+  truth coordinates are used only for evaluation.
+
+Every checkpoint stores exact pair arrays, retained/held-out point IDs, seeds,
+and SHA-256 split digests. This is intentional redundancy: a split can be
+reconstructed from configuration and audited directly from the checkpoint.
+
+### Learning curves
+
+Evaluate one uninterrupted training run at exact optimizer updates:
+
+```bash
+python src/train_multitask.py \
+    --world-type grid --distance-pairs 1000 --eval-pairs 1000 \
+    --pair-split-seed 0 --world-seed 0 --data-order-seed 0 --seed 0 --steps 10000 \
+    --evaluation-checkpoints 500 1000 2500 5000 10000
+```
+
+The same model and data iterator continue between checkpoints. Evaluation uses
+fixed-order loaders and restores the model's training mode. If
+`--evaluation-checkpoints` is omitted, the existing `--eval-every` and final
+evaluation behavior is preserved. A single final checkpoint can be requested
+with, for example, `--steps 5000 --evaluation-checkpoints 5000`.
+
+### Held-out-point recovery
+
+Run recovery only on selected budgets, since it is a separate point-exclusion
+protocol rather than another architecture or hyperparameter sweep dimension:
+
+```bash
+python src/train_multitask.py \
+    --world-type grid --distance-pairs 1000 --eval-pairs 200 \
+    --pair-split-seed 0 --world-seed 0 --data-order-seed 0 --seed 0 --steps 1000 \
+    --evaluation-checkpoints 1000 \
+    --held-out-points 10 --held-out-point-seed 0 \
+    --recovery-anchor-counts 3 5 10 \
+    --recovery-steps 200 --recovery-learning-rate 0.05 --recovery-seed 0
+```
+
+`--held-out-point-fraction` may be used instead of `--held-out-points`.
+Distance error/correlation, coordinate-probe error, nearest-neighbour recovery,
+and recovered-point pairwise consistency are recorded. A metric that cannot be
+defined for a world or sample size has an explicit `*_status` value rather
+than disappearing.
+
 ## Running a pair-budget sweep
 
 A sweep can be pasted directly into a Bash terminal:
@@ -179,6 +249,21 @@ for seed in 0 1 2 3 4; do
 done
 ```
 
+The checked-in sweep configuration keeps the world, split, architecture,
+optimizer, and evaluation protocol fixed, adds longer checkpoint schedules
+only to selected budgets, and appends point-recovery runs only for selected
+completed-model conditions:
+
+```bash
+python -m src.run_sweep configs/supervision_sweep.json --dry-run
+python -m src.run_sweep configs/supervision_sweep.json
+```
+
+Edit the JSON before running; the provided five-seed configuration is a real
+experiment, not a smoke test. Point-recovery entries produce additional
+point-exclusion runs with distinct checkpoint names and do not replace the
+ordinary held-out-pair runs.
+
 Checkpoints include the world, budget, pair seed, and model seed:
 
 ```text
@@ -203,6 +288,34 @@ analysis_results/all_runs.csv
 analysis_results/world_summary.csv
 analysis_results/plots/
 ```
+
+Training also writes tidy per-seed tables:
+
+```text
+results/learning_curves/<run>.csv
+results/recovery/<run>.csv
+results/recovery/<run>.json
+```
+
+Learning-curve rows include `world`, `supervision_budget`, `checkpoint`,
+`optimizer_updates`, `model_seed`, `world_seed`, data-order and split seeds,
+the fixed held-out-pair digest and full split digests,
+separate `training_pair_*` and `held_out_pair_*` metrics, and representation
+metrics. Recovery rows additionally include `held_out_point_id`,
+`recovery_anchor_count`, recovery settings, unused-anchor prediction metrics,
+coordinate/nearest-neighbour results, and support statuses. No seed aggregation
+occurs in training code.
+
+Create the four comparison plots with:
+
+```bash
+python analysis/plot_sweeps.py --results-dir results
+```
+
+Plots show each seed faintly and overlay the mean with a ±1 standard-deviation
+band when multiple seeds are available. They cover held-out-pair and
+representation quality versus budget, metrics versus optimizer updates, and
+point recovery versus anchor count.
 
 `all_runs.csv` contains one ordinary row per checkpoint. `world_summary.csv`
 uses two header rows (`mean` and `std`) and groups results by world and relation
@@ -259,12 +372,8 @@ evidence for a supervision-dependent transition, not yet a final result.
 ### Limitations of the preliminary result
 
 - Only one training seed has been evaluated, so uncertainty is unknown.
-- Every budget receives the same number of optimizer updates. Smaller datasets
-  are therefore reused more often than larger datasets.
-- Current prediction metrics do not exclude training pairs. As the budget
-  increases, prediction evaluation contains increasing train/test overlap.
-  Representation metrics remain useful, but prediction metrics should not yet
-  be interpreted as strictly held-out generalization.
+- The historical table predates the fixed-split and learning-curve additions;
+  it should be rerun with the protocols above before scientific comparison.
 - The 32-dimensional embeddings contain strongly decodable grid coordinates,
   but they do not collapse to a literal two-dimensional plane.
 
@@ -292,8 +401,20 @@ python -m pytest -q
 ```
 
 The tests cover manifold properties and distance-pair sampling, including
-unique unordered relations, nested supervision budgets, and invalid-budget
-detection.
+unique unordered relations, nested supervision budgets, split leakage,
+checkpoint schedules, point exclusion, frozen recovery, sweep expansion, and a
+small end-to-end learning-curve/recovery run.
+
+## Methodological guardrails
+
+Keep `world_seed`, `pair_split_seed`, `held_out_point_seed`, `data_order_seed`,
+architecture, optimizer settings, and evaluation protocol fixed within a
+comparison. Use at least five model seeds and inspect uncertainty or individual
+seeds. Do not compare an ordinary held-out-pair run directly with a
+point-exclusion run as if only the anchor count changed. These additions are
+designed to answer the existing supervision-budget question; they are not an
+architecture or hyperparameter search, and they imply no scientific conclusion
+until the controlled multi-seed experiments are run.
 
 ## Research progression
 
