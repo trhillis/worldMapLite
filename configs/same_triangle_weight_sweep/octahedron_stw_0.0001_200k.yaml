@@ -1,0 +1,39 @@
+# same_triangle_weight ladder follow-up, 200000 steps: 093 (weight=0.0001,
+# 50000 steps) was chosen from the full 091-097 ladder
+# (experiments/manifold_learning/octahedron/EXPERIMENTS.md, entry 097) as
+# the weight that keeps both distance and same_triangle held-out quality
+# near their respective ceilings, rather than 096 (weight=1e-7)'s slightly
+# better pure distance metrics bought at a real cost to same_triangle
+# accuracy/AUC. This reruns that weight at 4x the steps (200000, matching
+# 077's budget for the original weight=1.0 case) to see whether both
+# tasks' quality keeps improving together with substantially more
+# training.
+#
+# Run with:
+#   python -u -m src.train_manifold configs/same_triangle_weight_sweep/octahedron_stw_0.0001_200k.yaml
+
+manifold:
+  name: octahedron
+  n_points: 800
+  seed: 0
+
+model:
+  emb_dim: 32
+  hidden_dim: 128
+  num_heads: 4
+  num_layers: 2
+  dropout: 0.0
+  normalize_embeddings: false
+
+training:
+  tasks: [distance, same_triangle]
+  train_examples: 50000
+  batch_size: 256
+  steps: 200000
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-4
+  seed: 0
+  progress_interval: 500
+  test_fraction: 0.1
+  same_triangle_weight: 0.0001
+  # distance_weight omitted - defaults to 1.0

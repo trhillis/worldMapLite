@@ -1,0 +1,33 @@
+# Distance-only transformer training on the octahedron manifold, 150000
+# steps (3x octahedron_long.yaml's 50000) - regenerates the checkpoint used
+# by configs/octahedron_same_triangle_frozen_ft.yaml (frozen-embedding
+# same_triangle probe, see experiments/manifold_learning/octahedron/
+# EXPERIMENTS.md entry 100) at a longer step budget, to check whether the
+# frozen probe's accuracy on same_triangle improves when the source
+# distance embedding itself is more thoroughly converged.
+#
+# Run with:
+#   python -u -m src.train_manifold configs/octahedron_distance_150k.yaml
+
+manifold:
+  name: octahedron       # looked up via manifolds.get_manifold()
+  n_points: 800           # manifolds/README.md's recommended default
+  seed: 0
+
+model:
+  emb_dim: 32
+  hidden_dim: 128
+  num_heads: 4
+  num_layers: 2
+  dropout: 0.0
+  normalize_embeddings: false
+
+training:
+  train_examples: 50000
+  batch_size: 256
+  steps: 150000
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-4
+  seed: 0
+  progress_interval: 500  # steps between embedding-quality snapshots; 0 disables
+  test_fraction: 0.1  # fraction of all C(n_points, 2) pairs reserved as a held-out generalization check

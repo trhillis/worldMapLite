@@ -1,0 +1,111 @@
+Checkpoint: models/octahedron_same_triangle_model.pt
+Experiment: 106
+Manifold: octahedron (ambient_dim=3)
+Entities: 800
+Transformer layers: 2
+
+Entity embedding metrics (non-holdout points)
+PCA explained variance (3 components): 0.6385
+In-sample linear coordinate probe R²: 0.9764
+Cross-validated coordinate R²: 0.9733 ± 0.0009
+Geodesic-distance Spearman correlation: 0.8266
+Nearest-neighbor recall: 0.5650
+Embedding intrinsic dimension: 5.8511
+
+Transformer-probe reference points (8 total): [2, 15, 1, 19, 6, 0, 4, 5]
+
+Transformer-probe entity metrics (same_triangle, non-holdout points, averaged over 8 reference points [2, 15, 1, 19, 6, 0, 4, 5])
+PCA explained variance (3 components): 0.9630
+In-sample linear coordinate probe R²: 0.9923
+Cross-validated coordinate R²: 0.9865 ± 0.0011
+Geodesic-distance Spearman correlation: 0.9077
+Nearest-neighbor recall: 0.7800
+Embedding intrinsic dimension: 2.7791
+
+Transformer-probe entity metrics (same_triangle, non-holdout points, fixed reference point index=2)
+PCA explained variance (3 components): 0.9522
+In-sample linear coordinate probe R²: 0.9870
+Cross-validated coordinate R²: 0.9824 ± 0.0011
+Geodesic-distance Spearman correlation: 0.8531
+Nearest-neighbor recall: 0.7512
+Embedding intrinsic dimension: 2.8234
+
+Transformer-probe entity metrics (same_triangle, non-holdout points, fixed reference point index=15)
+PCA explained variance (3 components): 0.9510
+In-sample linear coordinate probe R²: 0.9913
+Cross-validated coordinate R²: 0.9868 ± 0.0004
+Geodesic-distance Spearman correlation: 0.8578
+Nearest-neighbor recall: 0.7512
+Embedding intrinsic dimension: 2.8210
+
+Transformer-probe entity metrics (same_triangle, non-holdout points, fixed reference point index=1)
+PCA explained variance (3 components): 0.9571
+In-sample linear coordinate probe R²: 0.9908
+Cross-validated coordinate R²: 0.9860 ± 0.0007
+Geodesic-distance Spearman correlation: 0.8621
+Nearest-neighbor recall: 0.7600
+Embedding intrinsic dimension: 2.6447
+
+Transformer-probe entity metrics (same_triangle, non-holdout points, fixed reference point index=19)
+PCA explained variance (3 components): 0.9522
+In-sample linear coordinate probe R²: 0.9935
+Cross-validated coordinate R²: 0.9898 ± 0.0010
+Geodesic-distance Spearman correlation: 0.8632
+Nearest-neighbor recall: 0.7512
+Embedding intrinsic dimension: 2.6650
+
+Transformer-probe entity metrics (same_triangle, non-holdout points, fixed reference point index=6)
+PCA explained variance (3 components): 0.9595
+In-sample linear coordinate probe R²: 0.9915
+Cross-validated coordinate R²: 0.9865 ± 0.0010
+Geodesic-distance Spearman correlation: 0.8680
+Nearest-neighbor recall: 0.7412
+Embedding intrinsic dimension: 2.7788
+
+Transformer-probe entity metrics (same_triangle, non-holdout points, fixed reference point index=0)
+PCA explained variance (3 components): 0.9480
+In-sample linear coordinate probe R²: 0.9886
+Cross-validated coordinate R²: 0.9833 ± 0.0020
+Geodesic-distance Spearman correlation: 0.8058
+Nearest-neighbor recall: 0.7512
+Embedding intrinsic dimension: 2.8635
+
+Transformer-probe entity metrics (same_triangle, non-holdout points, fixed reference point index=4)
+PCA explained variance (3 components): 0.9602
+In-sample linear coordinate probe R²: 0.9900
+Cross-validated coordinate R²: 0.9847 ± 0.0004
+Geodesic-distance Spearman correlation: 0.8506
+Nearest-neighbor recall: 0.7412
+Embedding intrinsic dimension: 2.8082
+
+Transformer-probe entity metrics (same_triangle, non-holdout points, fixed reference point index=5)
+PCA explained variance (3 components): 0.9573
+In-sample linear coordinate probe R²: 0.9912
+Cross-validated coordinate R²: 0.9870 ± 0.0005
+Geodesic-distance Spearman correlation: 0.8759
+Nearest-neighbor recall: 0.7375
+Embedding intrinsic dimension: 2.8473
+
+octahedron (same_triangle): entity-token CKA
+layer 1: 0.0316
+layer 2: 0.5526
+
+============================================================
+PAIR-SYMMETRY CHECK
+============================================================
+same_triangle: mean difference=0.0000031584, maximum difference=0.0000221729
+
+============================================================
+HELD-OUT PAIR GENERALIZATION
+============================================================
+test_fraction: 0.1
+
+[same_triangle]
+held-out:        n= 31960 loss=3.11367 accuracy=0.83210 auc=0.76073
+in-distribution: n= 31960 loss=0.00000 accuracy=1.00000 auc=1.00000
+generalization gap (held-out loss - in-distribution loss): +3.11367
+
+============================================================
+HOLDOUT POINT GENERALIZATION
+============================================================
+No holdout-point evaluation in this checkpoint (trained before this feature, or n_holdout_points=0) - skipping.

@@ -1,0 +1,36 @@
+# same_triangle_weight ladder continuation, 50000 steps: extends
+# 091-094's low-weight extension (0.01, 0.001, 0.0001, 0.00001) three more
+# decades down (0.000001 here), toward the minimum useful float precision at
+# this scale (1e-8), to keep mapping how far "lower same_triangle_weight
+# keeps helping" (per 088) continues before it stops mattering or
+# same_triangle's own task quality begins to suffer from too little
+# gradient signal.
+#
+# Run with:
+#   python -u -m src.train_manifold configs/same_triangle_weight_sweep/octahedron_stw_0.000001_50k.yaml
+
+manifold:
+  name: octahedron
+  n_points: 800
+  seed: 0
+
+model:
+  emb_dim: 32
+  hidden_dim: 128
+  num_heads: 4
+  num_layers: 2
+  dropout: 0.0
+  normalize_embeddings: false
+
+training:
+  tasks: [distance, same_triangle]
+  train_examples: 50000
+  batch_size: 256
+  steps: 50000
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-4
+  seed: 0
+  progress_interval: 500
+  test_fraction: 0.1
+  same_triangle_weight: 0.000001
+  # distance_weight omitted - defaults to 1.0

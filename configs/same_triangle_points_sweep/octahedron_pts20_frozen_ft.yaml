@@ -1,0 +1,45 @@
+# Point-pool sweep, point 20: frozen-distance-embedding same_triangle
+# probe (same methodology as octahedron_same_triangle_frozen_ft.yaml /
+# EXPERIMENTS.md entry 100), except training pairs are restricted to a
+# fixed 20-point pool (training.finetune_pool_points) instead of drawn
+# from all 800 points. test_pairs (the held-out generalization check) is
+# NOT restricted - it's still drawn from all 800 points, so held-out
+# accuracy here measures whether a same_triangle head fine-tuned on only
+# 20 points' pairs generalizes to the *entire* point set, using nothing
+# but the frozen, already-well-trained distance embedding of the points
+# it never saw a same_triangle label for.
+#
+# Must be run *after* a distance-only pretrain (e.g.
+# configs/octahedron_long.yaml), with its checkpoint backed up outside
+# models/ (models/*.pt is scratch and gets overwritten by every run) and
+# init_checkpoint below pointed at that stable copy.
+#
+# Run with:
+#   python -u -m src.train_manifold configs/same_triangle_points_sweep/octahedron_pts20_frozen_ft.yaml
+
+manifold:
+  name: octahedron       # looked up via manifolds.get_manifold()
+  n_points: 800           # must match the init_checkpoint's manifold
+  seed: 0                 # must match the init_checkpoint's seed
+
+model:
+  emb_dim: 32              # must match the init_checkpoint's model_cfg
+  hidden_dim: 128
+  num_heads: 4
+  num_layers: 2
+  dropout: 0.0
+  normalize_embeddings: false
+
+training:
+  tasks: [same_triangle]
+  init_checkpoint: models/pretrained/octahedron_distance_n800_50k.pt
+  freeze: [emb, transformer]
+  finetune_pool_points: 20
+  train_examples: 50000
+  batch_size: 256
+  steps: 20000
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-4
+  seed: 0
+  progress_interval: 500  # steps between embedding-quality snapshots; 0 disables
+  test_fraction: 0.1  # fraction of all C(n_points, 2) pairs reserved as a held-out generalization check

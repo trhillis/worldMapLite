@@ -1,0 +1,47 @@
+Checkpoint: models/octahedron_distance_same_triangle_model.pt
+Experiment: 095
+Manifold: octahedron (ambient_dim=3)
+Entities: 800
+Transformer layers: 2
+
+Entity embedding metrics (non-holdout points)
+PCA explained variance (3 components): 0.6738
+In-sample linear coordinate probe R²: 0.9800
+Cross-validated coordinate R²: 0.9774 ± 0.0008
+Geodesic-distance Spearman correlation: 0.8615
+Nearest-neighbor recall: 0.5563
+Embedding intrinsic dimension: 5.7693
+
+octahedron (distance): entity-token CKA
+layer 1: 0.0782
+layer 2: 0.7863
+
+octahedron (same_triangle): entity-token CKA
+layer 1: 0.0837
+layer 2: 0.7854
+
+============================================================
+PAIR-SYMMETRY CHECK
+============================================================
+distance: mean difference=0.0000000318, maximum difference=0.0000001788
+same_triangle: mean difference=0.0000067513, maximum difference=0.0000457764
+
+============================================================
+HELD-OUT PAIR GENERALIZATION
+============================================================
+test_fraction: 0.1
+
+[distance]
+held-out:        n= 31960 loss=0.00001 spearman=0.99986
+in-distribution: n= 31960 loss=0.00001 spearman=0.99986
+generalization gap (held-out loss - in-distribution loss): +0.00000
+
+[same_triangle]
+held-out:        n= 31960 loss=0.04003 accuracy=0.98310 auc=0.99779
+in-distribution: n= 31960 loss=0.03706 accuracy=0.98448 auc=0.99812
+generalization gap (held-out loss - in-distribution loss): +0.00297
+
+============================================================
+HOLDOUT POINT GENERALIZATION
+============================================================
+No holdout-point evaluation in this checkpoint (trained before this feature, or n_holdout_points=0) - skipping.

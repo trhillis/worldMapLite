@@ -1,0 +1,47 @@
+# Frozen-representation same_triangle probe: loads a distance-trained
+# checkpoint (models/octahedron_distance_model.pt, produced by
+# octahedron_long.yaml - 800 points, emb_dim=32, 50000 steps, distance-only)
+# via the new training.init_checkpoint option, freezes its embedding table
+# and shared transformer (training.freeze), and trains only a fresh
+# same_triangle_token + same_triangle_head on top. Every entity's
+# representation is exactly what distance-only training produced - nothing
+# about it can adapt to same_triangle.
+#
+# This is the strict-probe half of the question 099 raised the mirror
+# image of: 099 showed same_triangle-only training produces a poor
+# ambient-geometry embedding; this checks the reverse - does a good
+# distance embedding already contain what's needed to classify same-face
+# membership through a small trainable readout, or is that information
+# genuinely absent from a purely distance-trained representation?
+#
+# Must be run *after* regenerating models/octahedron_distance_model.pt via:
+#   python -u -m src.train_manifold configs/octahedron_long.yaml
+#
+# Then run this config:
+#   python -u -m src.train_manifold configs/octahedron_same_triangle_frozen_ft.yaml
+
+manifold:
+  name: octahedron       # looked up via manifolds.get_manifold()
+  n_points: 800           # must match the init_checkpoint's manifold
+  seed: 0                 # must match the init_checkpoint's seed
+
+model:
+  emb_dim: 32              # must match the init_checkpoint's model_cfg
+  hidden_dim: 128
+  num_heads: 4
+  num_layers: 2
+  dropout: 0.0
+  normalize_embeddings: false
+
+training:
+  tasks: [same_triangle]
+  init_checkpoint: models/octahedron_distance_model.pt
+  freeze: [emb, transformer]
+  train_examples: 50000
+  batch_size: 256
+  steps: 50000
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-4
+  seed: 0
+  progress_interval: 500  # steps between embedding-quality snapshots; 0 disables
+  test_fraction: 0.1  # fraction of all C(n_points, 2) pairs reserved as a held-out generalization check

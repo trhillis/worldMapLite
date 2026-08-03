@@ -1,0 +1,51 @@
+# Mirror of octahedron_same_triangle_frozen_ft.yaml (see experiments/
+# manifold_learning/octahedron/EXPERIMENTS.md entry 100): loads a
+# same_triangle-only-trained checkpoint (models/octahedron_same_triangle_
+# model.pt, produced by octahedron_same_triangle_50k.yaml - 800 points,
+# emb_dim=32, 50000 steps, same_triangle-only) via training.init_checkpoint,
+# freezes its embedding table and shared transformer (training.freeze),
+# and trains only a fresh distance_token + distance_head on top. Every
+# entity's representation is exactly what same_triangle-only training
+# produced - nothing about it can adapt to distance.
+#
+# 100 already found the forward direction (frozen distance embedding ->
+# fine-tuned same_triangle head) works remarkably well (98.63% held-out
+# accuracy). 099's own bulk metrics (cv R²≈0.34, NN recall≈0.01) already
+# suggest this reverse direction will fail badly, since a same_triangle-
+# only embedding barely encodes ambient position at all - this run makes
+# that failure quantitative and directly comparable to 100's 98.63% number,
+# via the same frozen-probe methodology instead of inferring it from a
+# different measurement (the coordinate/Spearman/NN-recall probes).
+#
+# Must be run *after* regenerating models/octahedron_same_triangle_model.pt
+# from scratch (no init_checkpoint/freeze) via:
+#   python -u -m src.train_manifold configs/octahedron_same_triangle_50k.yaml
+#
+# Then run this config:
+#   python -u -m src.train_manifold configs/octahedron_distance_frozen_ft.yaml
+
+manifold:
+  name: octahedron       # looked up via manifolds.get_manifold()
+  n_points: 800           # must match the init_checkpoint's manifold
+  seed: 0                 # must match the init_checkpoint's seed
+
+model:
+  emb_dim: 32              # must match the init_checkpoint's model_cfg
+  hidden_dim: 128
+  num_heads: 4
+  num_layers: 2
+  dropout: 0.0
+  normalize_embeddings: false
+
+training:
+  tasks: [distance]
+  init_checkpoint: models/octahedron_same_triangle_model.pt
+  freeze: [emb, transformer]
+  train_examples: 50000
+  batch_size: 256
+  steps: 50000
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-4
+  seed: 0
+  progress_interval: 500  # steps between embedding-quality snapshots; 0 disables
+  test_fraction: 0.1  # fraction of all C(n_points, 2) pairs reserved as a held-out generalization check

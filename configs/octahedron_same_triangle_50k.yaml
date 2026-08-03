@@ -1,0 +1,36 @@
+# same_triangle-only transformer training on the octahedron manifold, 50000
+# steps (5x octahedron_same_triangle.yaml's 10000, matching the step budget
+# used throughout the same_triangle_weight_sweep - see
+# experiments/manifold_learning/octahedron/EXPERIMENTS.md, entries 076-098).
+# No distance signal at all: isolates whether the raw-embedding bulk-metric
+# degradation found when combining distance+same_triangle (076) comes from
+# same_triangle specifically competing with distance for embedding-table
+# capacity, or whether same_triangle alone also fails to produce a cleanly-
+# linear embedding table (076's open next-step).
+#
+# Run with:
+#   python -u -m src.train_manifold configs/octahedron_same_triangle_50k.yaml
+
+manifold:
+  name: octahedron       # looked up via manifolds.get_manifold()
+  n_points: 800           # manifolds/README.md's recommended default
+  seed: 0
+
+model:
+  emb_dim: 32
+  hidden_dim: 128
+  num_heads: 4
+  num_layers: 2
+  dropout: 0.0
+  normalize_embeddings: false
+
+training:
+  tasks: [same_triangle]
+  train_examples: 50000
+  batch_size: 256
+  steps: 50000
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-4
+  seed: 0
+  progress_interval: 500  # steps between embedding-quality snapshots; 0 disables
+  test_fraction: 0.1  # fraction of all C(n_points, 2) pairs reserved as a held-out generalization check

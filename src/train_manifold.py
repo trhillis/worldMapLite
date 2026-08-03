@@ -14,6 +14,17 @@ The set of trained tasks is config-driven (training.tasks, default
 configs/octahedron_same_triangle.yaml (same_triangle alone) and
 configs/octahedron_distance_same_triangle.yaml (distance + same_triangle
 together) for multi-task examples.
+
+A run can also warm-start from an existing checkpoint (training.
+init_checkpoint) and freeze whole submodules by attribute name
+(training.freeze, e.g. ["emb", "transformer"]), to fine-tune only a new
+task's token/head on top of a pretrained, frozen representation - see
+configs/octahedron_same_triangle_frozen_ft.yaml. training.
+finetune_pool_points additionally restricts which points that new task's
+training pairs may touch (test_pairs stays drawn from every point), to
+probe how few points' worth of supervision the new head needs before it
+generalizes to the whole point set - see
+configs/same_triangle_points_sweep/.
 """
 
 # argparse reads the config-path command-line argument.
@@ -236,6 +247,41 @@ def main(config_path: str):
         exclude_points=holdout_points,
     )
 
+    # Optional: restrict which points training pairs may be drawn from,
+    # independent of the pair-level test_fraction split above - meant for
+    # probing how few points' worth of a new task's supervision (e.g. a
+    # frozen-embedding same_triangle head fine-tune) a model needs before
+    # it generalizes to the *entire* point set. test_pairs is left
+    # untouched (still drawn from all len(world.names) points), so it
+    # stays a fixed, sweep-comparable check of whole-point-set accuracy
+    # no matter how small the training pool gets. The pool is a prefix of
+    # one fixed seeded permutation of every point, so a smaller pool
+    # (e.g. 10 points) is always a subset of a larger one (e.g. 20
+    # points) at the same seed, making pool-size comparisons additive
+    # rather than independently-noisy draws.
+    finetune_pool_points = training_cfg.get("finetune_pool_points")
+
+    if finetune_pool_points is not None:
+        point_order = np.random.default_rng(
+            training_cfg["seed"]
+        ).permutation(len(world.names))
+        pool_points = set(point_order[:finetune_pool_points].tolist())
+
+        train_pairs = np.array(
+            [
+                (i, j) for i, j in train_pairs
+                if i in pool_points and j in pool_points
+            ],
+            dtype=np.int64,
+        )
+
+        print(
+            f"Restricting training pairs to a {finetune_pool_points}-point "
+            f"pool: {len(train_pairs)} eligible pairs "
+            f"(test_pairs unchanged: {len(test_pairs)} pairs drawn from "
+            f"all {len(world.names)} points)."
+        )
+
     # Each holdout point's probe pairs (used to recover its embedding
     # after training) and eval pairs (used to check how well the
     # recovered embedding generalizes) - built now, before training,
@@ -303,9 +349,61 @@ def main(config_path: str):
         **model_cfg,
     ).to(device)
 
-    # AdamW updates model parameters using calculated gradients.
+    # Optionally warm-start from an existing checkpoint (e.g. a
+    # distance-trained model, to fine-tune a different task's token/head
+    # on top of its embedding) instead of the random init above. The
+    # checkpoint must come from a model with identical model_cfg and the
+    # same (manifold_name, n_points, seed) - MultiTaskWorldModel always
+    # instantiates every task's token/head regardless of which tasks were
+    # trained, so state_dict shapes always match across task combinations
+    # at fixed model_cfg.
+    init_checkpoint = training_cfg.get("init_checkpoint")
+
+    if init_checkpoint:
+        checkpoint = torch.load(init_checkpoint, map_location=device)
+        checkpoint_world_meta = checkpoint["world_meta"]
+
+        if (
+            checkpoint_world_meta["manifold_name"] != manifold_cfg["name"]
+            or checkpoint_world_meta["n"] != manifold_cfg["n_points"]
+            or checkpoint_world_meta["seed"] != manifold_cfg["seed"]
+        ):
+            raise ValueError(
+                f"init_checkpoint {init_checkpoint!r} was trained on "
+                f"{checkpoint_world_meta}, which does not match this "
+                f"run's manifold {manifold_cfg!r} - embedding-table rows "
+                "would refer to different points."
+            )
+
+        model.load_state_dict(checkpoint["model_state_dict"])
+        print(f"Initialized model from checkpoint: {init_checkpoint}")
+
+    # Optionally freeze whole submodules (by attribute name, e.g. "emb",
+    # "transformer") so only the remaining parameters - typically a new
+    # task's token/head - receive gradient updates. Meant to pair with
+    # init_checkpoint above: freeze the pretrained submodules, fine-tune
+    # only what's task-specific on top of them.
+    frozen = training_cfg.get("freeze", [])
+
+    for name in frozen:
+        for parameter in getattr(model, name).parameters():
+            parameter.requires_grad = False
+
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+
+    if frozen:
+        n_trainable = sum(p.numel() for p in trainable_params)
+        n_total = sum(p.numel() for p in model.parameters())
+        print(
+            f"Frozen submodules: {frozen} "
+            f"({n_trainable}/{n_total} parameters trainable)"
+        )
+
+    # AdamW updates model parameters using calculated gradients. Only
+    # parameters with requires_grad=True are included, so frozen
+    # submodules (if any) never get an optimizer state or update.
     optimizer = torch.optim.AdamW(
-        model.parameters(),
+        trainable_params,
         lr=training_cfg["learning_rate"],
         weight_decay=training_cfg["weight_decay"],
     )

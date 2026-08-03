@@ -52,6 +52,7 @@ from scipy.stats import spearmanr
 from manifolds import get_manifold
 from src.worlds import make_manifold_world
 from src.multitask_model import MultiTaskWorldModel
+from src.datasets import points_on_faces
 
 from analysis.representations import (
     linear_cka,
@@ -62,6 +63,8 @@ from analysis.representations import (
     cross_validated_coordinate_probe,
     nearest_neighbor_recall,
     estimate_intrinsic_dimension,
+    compute_embedding_metrics,
+    compute_transformer_probe_embeddings,
     get_transformer_activations,
     plot_cka_matrix,
     plot_intrinsic_dimensions,
@@ -74,6 +77,12 @@ DEFAULT_TASKS = ["distance"]
 # Number of unique entity pairs used for transformer
 # representation analysis.
 PAIR_SAMPLE_SIZE = 5000
+
+# Number of fixed reference points used for the transformer-probe entity
+# representation (see the "Transformer-probe entity representations"
+# section of main()) - one per polyhedron face, so references are spread
+# across the manifold rather than clustered near a single arbitrary point.
+N_PROBE_REFERENCES = 8
 
 SEED = 0
 
@@ -286,6 +295,11 @@ def main(experiment_number: str, checkpoint_path: str):
             "embedding-quality metrics (plotted separately, marked)"
         )
 
+    # Used both by the transformer-probe PCA plots below and by the
+    # learned-embedding PCA plots further down, so recovered holdout
+    # points can be marked distinctly wherever they're plotted.
+    holdout_mask = ~non_holdout_mask
+
     bulk_embeddings = embeddings[non_holdout_mask]
     bulk_true_coordinates = true_coordinates[non_holdout_mask]
 
@@ -344,13 +358,156 @@ def main(experiment_number: str, checkpoint_path: str):
     log(f"Nearest-neighbor recall: {neighbor_recall:.4f}")
     log(f"Embedding intrinsic dimension: {embedding_intrinsic_dimension:.4f}")
 
+    # --------------------------------------------------
+    # Transformer-probe entity representations
+    # --------------------------------------------------
+    #
+    # EXPERIMENTS.md entry 102: the metrics above (raw model.emb.weight)
+    # are blind to whatever the transformer itself contributes and can
+    # understate a representation's true task-relevant content. Re-run the
+    # same probes on the transformer's output instead: every entity is
+    # paired with a fixed reference entity through the trained 3-token
+    # sequence, and the transformed task token is read out as that
+    # entity's representation - see compute_transformer_probe_embeddings.
+    #
+    # 103's "next steps" flagged that a single arbitrary reference point
+    # makes these numbers sensitive to which point happens to be chosen.
+    # To address that, N_PROBE_REFERENCES reference points are used
+    # instead of one - one per polyhedron face where possible (via
+    # points_on_faces), so references are spread across the manifold's
+    # distinct faces rather than clustered near one arbitrary point - and
+    # the resulting per-entity representations are averaged. Falls back to
+    # a single reference point (the first non-holdout point) for manifolds
+    # without polyhedron faces (e.g. FlatTorus, FlatMobiusStrip).
+    if hasattr(manifold, "n_faces"):
+        reference_faces = np.unique(
+            np.linspace(
+                0, manifold.n_faces - 1,
+                num=min(N_PROBE_REFERENCES, manifold.n_faces),
+            ).round().astype(np.int64)
+        )
+
+        probe_point_indices = []
+
+        for face in reference_faces:
+            face_points = points_on_faces(world, [int(face)])
+            candidates = face_points[non_holdout_mask[face_points]]
+
+            if len(candidates) == 0:
+                raise ValueError(
+                    f"No non-holdout points on face {face} to use as a "
+                    "transformer-probe reference point."
+                )
+
+            probe_point_indices.append(int(candidates[0]))
+    else:
+        probe_point_indices = [int(np.flatnonzero(non_holdout_mask)[0])]
+
+    log(
+        f"\nTransformer-probe reference points ({len(probe_point_indices)} "
+        f"total): {probe_point_indices}"
+    )
+
+    def log_probe_metrics(header, metrics):
+        log(f"\n{header}")
+        log(
+            f"PCA explained variance ({n_components} components): "
+            f"{metrics['pca_explained_variance']:.4f}"
+        )
+        log(f"In-sample linear coordinate probe R²: {metrics['linear_r2']:.4f}")
+        log(
+            "Cross-validated coordinate R²: "
+            f"{metrics['cv_r2_mean']:.4f} ± {metrics['cv_r2_std']:.4f}"
+        )
+        log(
+            "Geodesic-distance Spearman correlation: "
+            f"{metrics['distance_spearman']:.4f}"
+        )
+        log(f"Nearest-neighbor recall: {metrics['nn_recall']:.4f}")
+        log(f"Embedding intrinsic dimension: {metrics['intrinsic_dim']:.4f}")
+
+    def plot_probe_pca(embeddings_for_pca, title, save_path):
+        # Same PCA-scatter treatment as the raw embedding table below,
+        # fit on non-holdout points and applied to every point (so
+        # recovered holdout points can be marked distinctly).
+        pca = PCA(n_components=n_components).fit(
+            embeddings_for_pca[non_holdout_mask]
+        )
+        pca_points = pca.transform(embeddings_for_pca)
+
+        scatter_3d_or_2d(
+            None, pca_points, point_colors, title,
+            save_path=save_path, highlight_mask=holdout_mask,
+        )
+
+    for task in tasks:
+        # One transformer-probe representation per reference point.
+        per_reference_embeddings = [
+            compute_transformer_probe_embeddings(
+                model=model, task=task, probe_point_index=probe_point_index,
+            )
+            for probe_point_index in probe_point_indices
+        ]
+
+        # Headline result: the per-entity representations averaged across
+        # every reference point, which is what compute_embedding_metrics
+        # is run on above the per-reference breakdown below.
+        averaged_embeddings = np.mean(per_reference_embeddings, axis=0)
+
+        averaged_metrics = compute_embedding_metrics(
+            averaged_embeddings[non_holdout_mask],
+            bulk_true_coordinates,
+            true_distance_upper=upper_triangle_values(true_distance_matrix),
+            seed=SEED,
+        )
+
+        log_probe_metrics(
+            f"Transformer-probe entity metrics ({task}, non-holdout points, "
+            f"averaged over {len(probe_point_indices)} reference points "
+            f"{probe_point_indices})",
+            averaged_metrics,
+        )
+
+        plot_probe_pca(
+            averaged_embeddings,
+            f"PCA of transformer-probe entity representations "
+            f"({manifold.name}, {task}, averaged over "
+            f"{len(probe_point_indices)} references)",
+            figures_dir / f"transformer_probe_pca_{task}.png",
+        )
+
+        # Per-reference-point breakdown, so the averaged result above can
+        # be checked against - and each individual reference point's own
+        # metrics/plot inspected - rather than only ever seeing the
+        # average.
+        for probe_point_index, transformer_probe_embeddings in zip(
+            probe_point_indices, per_reference_embeddings,
+        ):
+            transformer_probe_metrics = compute_embedding_metrics(
+                transformer_probe_embeddings[non_holdout_mask],
+                bulk_true_coordinates,
+                true_distance_upper=upper_triangle_values(true_distance_matrix),
+                seed=SEED,
+            )
+
+            log_probe_metrics(
+                f"Transformer-probe entity metrics ({task}, non-holdout "
+                f"points, fixed reference point index={probe_point_index})",
+                transformer_probe_metrics,
+            )
+
+            plot_probe_pca(
+                transformer_probe_embeddings,
+                f"PCA of transformer-probe entity representations "
+                f"({manifold.name}, {task}, reference={probe_point_index})",
+                figures_dir / f"transformer_probe_pca_{task}_ref{probe_point_index}.png",
+            )
+
     # Side-by-side comparison: learned-embedding PCA vs. true-manifold PCA.
     # This is the direct visual answer to "does the hidden representation
     # match the manifold's surface." Recovered holdout points (if any) are
     # transformed into the same bases and marked distinctly, so recovery
     # can be checked visually against the bulk point cloud.
-    holdout_mask = ~non_holdout_mask
-
     scatter_3d_or_2d(
         None, embedding_pca_points, point_colors,
         f"PCA of learned entity embeddings ({manifold.name})",

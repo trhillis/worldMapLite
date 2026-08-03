@@ -705,6 +705,51 @@ def get_transformer_activations(
     return activations
 
 
+def compute_transformer_probe_embeddings(
+    model,
+    task,
+    probe_point_index,
+):
+    """
+    Build one transformer-derived representation per entity, so the same
+    compute_embedding_metrics probes normally run on the raw embedding
+    table (model.emb.weight) can instead be run on what the transformer
+    itself contributes on top of it.
+
+    Every query point i is paired against the *same* fixed partner point,
+    probe_point_index, through the trained 3-token sequence [task_token,
+    entity_i, entity_REF] - i.e. entity i's "transformer probe embedding"
+    is pair_representation(i, probe_point_index, task_token). Holding the
+    partner and task fixed while varying i isolates what the transformer
+    does with entity i's own identity, staying in-distribution for a model
+    that has only ever seen length-3 sequences (unlike shortening the
+    sequence or self-pairing).
+
+    probe_point_index is chosen by the caller (e.g. the first non-holdout
+    point index) rather than here, since a "safe, representative
+    reference" is context-dependent.
+
+    Unlike compute_embedding_metrics's neighbors, this runs a real
+    transformer forward pass, so - like get_transformer_activations - call
+    it post-hoc (analysis only), not from a periodic training snapshot.
+
+    Returns a [num_points, emb_dim] numpy array, row i = entity i's
+    transformed task-token ("pair") representation.
+    """
+
+    task_token, _ = get_task_components(model, task)
+
+    num_points = model.emb.num_embeddings
+
+    point_i = torch.arange(num_points, dtype=torch.long)
+    point_j = torch.full((num_points,), probe_point_index, dtype=torch.long)
+
+    with torch.inference_mode():
+        pair = model.pair_representation(point_i, point_j, task_token)
+
+    return pair.detach().cpu().numpy()
+
+
 # --------------------------------------------------
 # Plotting utilities
 # --------------------------------------------------
