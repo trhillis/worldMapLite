@@ -67,7 +67,7 @@ def evaluate_distance_examples(model, examples, scale, device, batch_size):
     }
 
 
-def _true_distance_matrix(world):
+def true_distance_matrix(world):
     coordinates = np.asarray(world.coordinates)
     if world.meta["type"] == "grid":
         return np.linalg.norm(coordinates[:, None] - coordinates[None, :], axis=-1)
@@ -76,8 +76,16 @@ def _true_distance_matrix(world):
     return None
 
 
-def representation_metrics(model, world, seed=0, max_pairs=10_000) -> dict:
-    """Compute the representation metrics already used by main's analysis."""
+def representation_metrics(model, world, seed=0, max_pairs=10_000, world_distance_matrix=None) -> dict:
+    """Compute the representation metrics already used by main's analysis.
+
+    `world_distance_matrix` lets a caller that evaluates the same world at
+    several checkpoints (e.g. learning curves) compute the true geodesic
+    distance matrix once and reuse it, instead of paying its full O(n^2)
+    cost - expensive for manifolds like the octahedron, whose per-pair
+    geodesic is an unfolding search rather than a closed-form formula - on
+    every evaluation.
+    """
 
     embeddings = model.emb.weight.detach().cpu().numpy().astype(np.float64)
     coordinates = (
@@ -102,7 +110,10 @@ def representation_metrics(model, world, seed=0, max_pairs=10_000) -> dict:
         result["cv_probe_r2_mean"] = float("nan")
         result["coordinate_probe_status"] = "unsupported: fewer than ten coordinate-bearing points"
 
-    matrix = _true_distance_matrix(world)
+    matrix = (
+        world_distance_matrix if world_distance_matrix is not None
+        else true_distance_matrix(world)
+    )
     if matrix is None:
         result.update({
             "embedding_distance_spearman": float("nan"),

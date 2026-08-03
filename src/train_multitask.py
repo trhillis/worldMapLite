@@ -44,6 +44,7 @@ from src.datasets import (
 from src.evaluation import (
     evaluate_distance_examples,
     representation_metrics,
+    true_distance_matrix,
 )
 from src.point_recovery import recover_held_out_points
 from src.splits import make_pair_split, make_point_split
@@ -532,6 +533,11 @@ def main(cfg=None):
         seed=cfg.held_out_point_seed,
     )
     world = subset_world(full_world, point_split.retained_points)
+    # The world is fixed for the rest of this run, so its true distance
+    # matrix is computed once here and reused at every evaluation checkpoint
+    # instead of being recomputed - expensive for manifolds whose geodesics
+    # are unfolding searches rather than a closed-form formula.
+    world_distance_matrix = true_distance_matrix(world)
     # These are only necessary when training the nearest task.
     nearest_cache = None
     negative_cache = None
@@ -765,6 +771,7 @@ def main(cfg=None):
                 "held_out": held_out_metrics,
                 "representation": representation_metrics(
                     model, world, seed=cfg.seed,
+                    world_distance_matrix=world_distance_matrix,
                 ),
             }
             distance_history.append(

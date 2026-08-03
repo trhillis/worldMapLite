@@ -3,3 +3,4 @@ models/
 __pycache__/
 analysis_results/
 results/
+data/
