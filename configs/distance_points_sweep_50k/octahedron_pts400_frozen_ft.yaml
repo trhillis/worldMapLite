@@ -1,0 +1,56 @@
+# Extended reverse point-pool sweep, point 8/16: frozen same_triangle-
+# embedding distance probe, 50000-step budget (2.5x the 106-115-matching
+# 20000-step budget used in configs/distance_points_sweep/ /
+# EXPERIMENTS.md entries 116-125). Same methodology as
+# octahedron_distance_frozen_ft.yaml / EXPERIMENTS.md entry 102 (which used
+# this same 50000-step budget at full, unrestricted supervision), except
+# training pairs are restricted to a fixed 400-point pool
+# (training.finetune_pool_points) instead of drawn from all 800 points.
+# test_pairs (the held-out generalization check) is NOT restricted - it's
+# still drawn from all 800 points.
+#
+# Extends 116-125's 10-100 point range up to the full 800 points in steps
+# of 50, at the longer 50000-step budget, to see (a) whether held-out
+# Spearman keeps rising past K=100 toward 102's 0.779 ceiling, and (b)
+# whether the extra steps (vs. 116-125's 20000) close some of that gap on
+# their own, the way 010 found more steps helped (partially) in the
+# distance-emb_dim sweep. K=800 with the full step/example budget is
+# functionally a rerun of 102 itself (all 800 points are in-pool, so the
+# only distinction from 102's unrestricted config is that this one still
+# names an explicit finetune_pool_points), making it a natural end-of-sweep
+# sanity check against 102's own numbers.
+#
+# Uses the already-backed-up same_triangle-only pretrain checkpoint at
+# models/pretrained/octahedron_same_triangle_n800_50k.pt (produced for
+# experiments 099/102, 800 points/emb_dim=32/50000 steps/seed 0) - no
+# fresh pretrain/backup step is needed here.
+#
+# Run with:
+#   python -u -m src.train_manifold configs/distance_points_sweep_50k/octahedron_pts400_frozen_ft.yaml
+
+manifold:
+  name: octahedron       # looked up via manifolds.get_manifold()
+  n_points: 800           # must match the init_checkpoint's manifold
+  seed: 0                 # must match the init_checkpoint's seed
+
+model:
+  emb_dim: 32              # must match the init_checkpoint's model_cfg
+  hidden_dim: 128
+  num_heads: 4
+  num_layers: 2
+  dropout: 0.0
+  normalize_embeddings: false
+
+training:
+  tasks: [distance]
+  init_checkpoint: models/pretrained/octahedron_same_triangle_n800_50k.pt
+  freeze: [emb, transformer]
+  finetune_pool_points: 400
+  train_examples: 50000
+  batch_size: 256
+  steps: 50000
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-4
+  seed: 0
+  progress_interval: 500  # steps between embedding-quality snapshots; 0 disables
+  test_fraction: 0.1  # fraction of all C(n_points, 2) pairs reserved as a held-out generalization check

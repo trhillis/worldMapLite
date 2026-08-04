@@ -5382,3 +5382,1005 @@ meaningful fraction of pairs flatly wrong.
   effects from "less repetition per pair" effects, which are currently
   confounded since both change together as K grows at fixed
   `train_examples`.
+
+---
+
+## 116 - Reverse point-pool sweep, point 1/10: K=10 points, frozen same_triangle embedding
+
+### 1. Model settings
+
+Mirror of 106-115, reversed: freezes a same_triangle-only embedding instead
+of a distance-only one, and fine-tunes a fresh `distance` head/token on top
+via the same `training.finetune_pool_points` mechanism. Reuses the
+already-backed-up `models/pretrained/octahedron_same_triangle_n800_50k.pt`
+checkpoint (800 points, emb_dim=32, 50000 steps, seed 0 - produced for/used
+by 099/102) directly, since it already matches spec exactly - no fresh
+pretrain/backup step was needed here, unlike 106's fresh distance-checkpoint
+regeneration. New configs
+`configs/distance_points_sweep/octahedron_pts{K}_frozen_ft.yaml` for K in
+{10, 20, ..., 100}: `tasks: [distance]`, `init_checkpoint` pointed at that
+same_triangle checkpoint, `freeze: [emb, transformer]`,
+`finetune_pool_points: K`, same 50000 `train_examples`/20000-step budget as
+106-115. Purpose: the mirror-image question to 106-115's - given a frozen,
+well-trained *same_triangle* embedding, how many points' worth of
+`distance` supervision does a fine-tuned head need before it generalizes to
+pairs across the entire 800-point set? 102 already answered this at full
+(unrestricted) supervision (held-out loss 0.00812, Spearman 0.779); this
+sweep asks how much of that 102 ceiling survives when supervision is
+restricted to a small point pool, the same way 106-115 did for the other
+direction relative to 100's ceiling.
+
+### 2. Results / findings
+
+Result folder: `experiments/manifold_learning/octahedron/116/`
+
+K=10: 41 eligible training pairs (of C(10,2)=45) - identical point pool and
+pair count to 106, since the point-pool permutation is seeded independently
+of task.
+
+| metric | value |
+|---|---:|
+| distance held-out loss / Spearman | 0.02433 / **0.39528** |
+| distance in-distribution loss / Spearman | 0.00000 / 1.00000 |
+| frozen embedding (sanity check, identical every K) cv R² / Spearman / NN recall / intrinsic dim | 0.3403 ± 0.0229 / 0.3165 / 0.0100 / 16.0708 |
+| transformer-probe (distance, averaged over 8 refs) cv R² / Spearman / NN recall | 0.5306 ± 0.0279 / 0.2785 / 0.0163 |
+
+- The frozen embedding-table sanity numbers exactly match 099/102's own
+  same_triangle-only source checkpoint (cv R² 0.3403, Spearman 0.3165, NN
+  recall 0.0100, intrinsic dim 16.0708) - confirms the shared checkpoint
+  loaded correctly and only the point-pool restriction changed.
+- With supervision touching only 10 of 800 points, the fine-tuned distance
+  head already reaches held-out Spearman 0.395 - a substantial fraction of
+  102's full-800-point ceiling (0.779) from just 1.25% of the points, but
+  starting from a much lower base than 106's same_triangle-direction K=10
+  point (0.832 accuracy, itself already close to its own ceiling).
+- In-distribution loss is an exact 0.0 (only 41 distinct pairs seen ~1220x
+  each over 50000 examples, same coverage as 106), and in-distribution
+  Spearman is a perfect 1.0 - the head memorizes this tiny pool's exact
+  pairwise distances trivially, same pattern as 106's same_triangle side.
+
+### 3. Next steps
+
+- Continue up to K=100 (117-125) to see whether held-out Spearman rises
+  smoothly with point-pool size the way 106-115's accuracy did, or shows a
+  different (noisier, or lower-ceiling) shape given 102's much lower
+  full-supervision ceiling for this direction.
+
+---
+
+## 117 - Reverse point-pool sweep, point 2/10: K=20 points
+
+### 1. Model settings
+
+Same as 116, `finetune_pool_points: 20`
+(`configs/distance_points_sweep/octahedron_pts20_frozen_ft.yaml`).
+
+### 2. Results / findings
+
+Result folder: `experiments/manifold_learning/octahedron/117/`
+
+K=20: 164 eligible training pairs (of C(20,2)=190).
+
+| metric | K=10 (116) | K=20 (117) |
+|---|---:|---:|
+| held-out loss / Spearman | 0.02433 / 0.39528 | 0.02393 / **0.47123** |
+| in-distribution loss / Spearman | 0.00000 / 1.00000 | 0.00002 / 0.99938 |
+
+- Doubling the pool from 10 to 20 points buys +0.076 held-out Spearman -
+  a meaningful jump, though (unlike 106/107's accuracy) held-out loss barely
+  moves (0.02433 -> 0.02393).
+- In-distribution loss leaves exact 0.0 already at K=20 (0.00002) - much
+  earlier than the same_triangle direction's K=80 (113) - consistent with
+  a continuous regression target being harder to fit to exact zero loss
+  than a binary classification target, even at similar per-pair coverage.
+
+### 3. Next steps
+
+- Continue the sweep toward K=100; watch whether held-out Spearman keeps
+  climbing steadily or is noisier than 106-115's accuracy curve.
+
+---
+
+## 118 - Reverse point-pool sweep, point 3/10: K=30 points
+
+### 1. Model settings
+
+Same as 116/117, `finetune_pool_points: 30`.
+
+### 2. Results / findings
+
+Result folder: `experiments/manifold_learning/octahedron/118/`
+
+K=30: 383 eligible training pairs (of C(30,2)=435).
+
+| metric | K=20 (117) | K=30 (118) |
+|---|---:|---:|
+| held-out loss / Spearman | 0.02393 / 0.47123 | 0.03265 / **0.38179** |
+| in-distribution loss / Spearman | 0.00002 / 0.99938 | 0.00000 / 0.99994 |
+
+- **First non-monotonic point, and a sharper dip than 108's same_triangle-
+  direction equivalent:** held-out Spearman falls from 0.471 back to 0.382 -
+  essentially back to 116's K=10 level - despite 2.3x more eligible pairs,
+  and held-out loss rises too (0.024 -> 0.033). 108 saw only a small wobble
+  at the equivalent point (K=20->30); here the swing is much larger relative
+  to the narrow 0.38-0.54 range this whole sweep occupies, suggesting the
+  low-supervision distance-head fine-tune is noisier run-to-run than the
+  same_triangle-head fine-tune was.
+
+### 3. Next steps
+
+- Continue the sweep; check whether K=40 resumes the upward trend or this
+  noisiness recurs at other points too - see 125 for the full picture.
+
+---
+
+## 119 - Reverse point-pool sweep, point 4/10: K=40 points
+
+### 1. Model settings
+
+Same as prior entries, `finetune_pool_points: 40`.
+
+### 2. Results / findings
+
+Result folder: `experiments/manifold_learning/octahedron/119/`
+
+K=40: 693 eligible training pairs (of C(40,2)=780).
+
+| metric | K=30 (118) | K=40 (119) |
+|---|---:|---:|
+| held-out loss / Spearman | 0.03265 / 0.38179 | 0.02733 / **0.47186** |
+| in-distribution loss / Spearman | 0.00000 / 0.99994 | 0.00004 / 0.99909 |
+
+- The dip reverses: held-out Spearman climbs back to 0.472, essentially
+  matching 117's K=20 value rather than continuing to improve past it -
+  the sweep so far looks like it's oscillating around ~0.38-0.47 rather
+  than climbing steadily, unlike 106-115's smooth accuracy rise.
+
+### 3. Next steps
+
+- Continue toward K=100; it's still unclear whether this is noise around a
+  slowly-rising trend or a genuine plateau below 102's 0.779 ceiling.
+
+---
+
+## 120 - Reverse point-pool sweep, point 5/10: K=50 points
+
+### 1. Model settings
+
+Same as prior entries, `finetune_pool_points: 50`.
+
+### 2. Results / findings
+
+Result folder: `experiments/manifold_learning/octahedron/120/`
+
+K=50: 1090 eligible training pairs (of C(50,2)=1225).
+
+| metric | K=40 (119) | K=50 (120) |
+|---|---:|---:|
+| held-out loss / Spearman | 0.02733 / 0.47186 | 0.02775 / 0.47093 |
+| in-distribution loss / Spearman | 0.00004 / 0.99909 | 0.00013 / 0.99798 |
+
+- Halfway through the sweep (K=50/800 = 6.25%): held-out Spearman is
+  essentially flat versus K=40 (0.4719 -> 0.4709) despite 1090 vs. 693
+  eligible pairs - the first fully flat step in this sweep, reinforcing
+  119's "oscillating around a middling value" reading over "steadily
+  climbing."
+- In-distribution loss keeps growing slowly (0.00004 -> 0.00013) as the
+  pool widens against the fixed 50000-example budget, the same direction
+  as 106-115's pattern (there it stayed exactly 0 far longer, though).
+
+### 3. Next steps
+
+- Continue toward K=100; watch specifically whether the back half of the
+  sweep (K=60-100) shows any clearer trend than the front half has so far.
+
+---
+
+## 121 - Reverse point-pool sweep, point 6/10: K=60 points
+
+### 1. Model settings
+
+Same as prior entries, `finetune_pool_points: 60`.
+
+### 2. Results / findings
+
+Result folder: `experiments/manifold_learning/octahedron/121/`
+
+K=60: 1588 eligible training pairs (of C(60,2)=1770).
+
+| metric | K=50 (120) | K=60 (121) |
+|---|---:|---:|
+| held-out loss / Spearman | 0.02775 / 0.47093 | 0.02799 / 0.46004 |
+| in-distribution loss / Spearman | 0.00013 / 0.99798 | 0.00019 / 0.99598 |
+
+- A slight further dip (0.471 -> 0.460), continuing the flat/noisy pattern
+  rather than resuming any climb - the opposite of 111's same_triangle-
+  direction equivalent, where K=50->60 was the single largest per-step
+  improvement in that whole sweep.
+
+### 3. Next steps
+
+- Continue toward K=100.
+
+---
+
+## 122 - Reverse point-pool sweep, point 7/10: K=70 points
+
+### 1. Model settings
+
+Same as prior entries, `finetune_pool_points: 70`.
+
+### 2. Results / findings
+
+Result folder: `experiments/manifold_learning/octahedron/122/`
+
+K=70: 2172 eligible training pairs (of C(70,2)=2415).
+
+| metric | K=60 (121) | K=70 (122) |
+|---|---:|---:|
+| held-out loss / Spearman | 0.02799 / 0.46004 | 0.02804 / **0.49543** |
+| in-distribution loss / Spearman | 0.00019 / 0.99598 | 0.00042 / 0.99127 |
+
+- Held-out Spearman recovers to a new sweep-high (0.495), but held-out loss
+  is essentially unchanged (0.02799 -> 0.02804) - unlike 112's
+  same_triangle-direction equivalent, where loss was already the more
+  sensitive, steadily-improving signal by this point in that sweep. Here
+  loss has stayed in a tight 0.024-0.033 band for the whole sweep so far
+  with no clear trend either way.
+
+### 3. Next steps
+
+- Continue toward K=100; in-distribution loss keeps rising gradually
+  (0.00042 here) - track whether it keeps growing steadily like this
+  direction's pattern so far, unlike 106-115's late-onset jump.
+
+---
+
+## 123 - Reverse point-pool sweep, point 8/10: K=80 points
+
+### 1. Model settings
+
+Same as prior entries, `finetune_pool_points: 80`.
+
+### 2. Results / findings
+
+Result folder: `experiments/manifold_learning/octahedron/123/`
+
+K=80: 2847 eligible training pairs (of C(80,2)=3160).
+
+| metric | K=70 (122) | K=80 (123) |
+|---|---:|---:|
+| held-out loss / Spearman | 0.02804 / 0.49543 | 0.02626 / 0.47106 |
+| in-distribution loss / Spearman | 0.00042 / 0.99127 | 0.00073 / 0.98490 |
+
+- Held-out Spearman gives back a little of 122's gain (0.495 -> 0.471,
+  back near the K=40/50 plateau value) while held-out loss ticks down
+  slightly (0.02804 -> 0.02626) - the loss/Spearman split doesn't move
+  together here the way it started to in 112/113's same_triangle
+  direction.
+
+### 3. Next steps
+
+- Continue toward K=100; two points left - see 125 for the full ten-point
+  table and synthesis.
+
+---
+
+## 124 - Reverse point-pool sweep, point 9/10: K=90 points
+
+### 1. Model settings
+
+Same as prior entries, `finetune_pool_points: 90`.
+
+### 2. Results / findings
+
+Result folder: `experiments/manifold_learning/octahedron/124/`
+
+K=90: 3605 eligible training pairs (of C(90,2)=4005).
+
+| metric | K=80 (123) | K=90 (124) |
+|---|---:|---:|
+| held-out loss / Spearman | 0.02626 / 0.47106 | 0.02365 / **0.51412** |
+| in-distribution loss / Spearman | 0.00073 / 0.98490 | 0.00087 / 0.98147 |
+
+- Held-out Spearman sets a new sweep-high (0.514) and held-out loss also
+  improves (0.02626 -> 0.02365) - the first point where both move the same
+  (good) direction together since K=40->50.
+
+### 3. Next steps
+
+- One point left (K=100) - see 125 for the complete ten-point table and
+  overall synthesis, and comparison against 102's full-800-point ceiling.
+
+---
+
+## 125 - Reverse point-pool sweep, point 10/10: K=100 points, and full sweep summary
+
+### 1. Model settings
+
+Same as prior entries, `finetune_pool_points: 100` - the last and widest
+point planned for this sweep (10 through 100 in steps of ten), mirroring
+106-115's range for the other direction.
+
+### 2. Results / findings
+
+Result folder: `experiments/manifold_learning/octahedron/125/`
+
+K=100: 4441 eligible training pairs (of C(100,2)=4950).
+
+Full sweep, all 10 points (20000 steps / 50000 examples each, frozen
+same_triangle embedding shared across every row; frozen embedding-table
+sanity check - cv R² 0.3403 ± 0.0229, Spearman 0.3165, NN recall 0.0100,
+intrinsic dim 16.0708 - identical at every K, confirming the shared
+checkpoint loaded correctly throughout):
+
+| K (points) | eligible pairs | held-out loss | held-out Spearman | in-dist. loss | in-dist. Spearman |
+|---:|---:|---:|---:|---:|---:|
+| 10 | 41 | 0.02433 | 0.39528 | 0.00000 | 1.00000 |
+| 20 | 164 | 0.02393 | 0.47123 | 0.00002 | 0.99938 |
+| 30 | 383 | 0.03265 | 0.38179 | 0.00000 | 0.99994 |
+| 40 | 693 | 0.02733 | 0.47186 | 0.00004 | 0.99909 |
+| 50 | 1090 | 0.02775 | 0.47093 | 0.00013 | 0.99798 |
+| 60 | 1588 | 0.02799 | 0.46004 | 0.00019 | 0.99598 |
+| 70 | 2172 | 0.02804 | 0.49543 | 0.00042 | 0.99127 |
+| 80 | 2847 | 0.02626 | 0.47106 | 0.00073 | 0.98490 |
+| 90 | 3605 | 0.02365 | 0.51412 | 0.00087 | 0.98147 |
+| 100 | 4441 | **0.01985** | **0.54313** | 0.00105 | 0.97769 |
+
+For reference, 102's full-800-point, 50000-step ceiling for this direction:
+held-out loss 0.00812, Spearman 0.77864.
+
+**Headline: unlike 106-115's smooth, almost-monotonic accuracy climb, this
+reverse-direction sweep is noisy and only weakly trending upward - held-out
+Spearman moves in a narrow, oscillating band (0.38-0.54) across the whole
+10-100 point range, ending at K=100 barely halfway to 102's full-supervision
+ceiling (0.779), not ~95% of the way there like 106-115's accuracy did
+relative to 100's ceiling.** Concretely:
+
+- Going from 10 to 100 points (1.25% to 12.5% of all 800 points) takes held-
+  out Spearman from 0.395 to 0.543 (+0.148) - a real but modest gain, with
+  two clear dips along the way (K=30, K=80) rather than 106-115's near-
+  monotonic rise (which had only one small K=20->30 wobble in the *other*
+  direction's sweep).
+- At K=100, held-out Spearman (0.543) has recovered only about 55% of the
+  gap between 116's K=10 starting point (0.395) and 102's ceiling (0.779) -
+  far short of 115's ~95-98% ceiling recovery for the same_triangle
+  direction at the same point-pool size. This is consistent with 102's own
+  finding that the same_triangle -> distance transfer direction has a much
+  lower, harder-to-reach ceiling than the distance -> same_triangle
+  direction: a same_triangle-only embedding simply carries less recoverable
+  distance information for a small-pool-supervised head to extract, no
+  matter how many (of the few available) points that supervision touches.
+- Held-out **loss** is essentially flat for most of the sweep (0.024-0.033
+  from K=10 through K=90) and only clearly improves at the very last point
+  (0.01985 at K=100) - the opposite of 106-115, where loss was the more
+  dynamic, steadily-improving metric throughout while accuracy grew more
+  slowly per step. Here Spearman (the ranking-quality metric) is the one
+  that moves the most, while loss stays comparatively flat until the end.
+- In-distribution loss leaves exact 0.0 far earlier (already nonzero by
+  K=20, 0.00002) than the same_triangle direction (exactly 0 through K=70,
+  106-114) - consistent with a continuous regression target being harder
+  to memorize to exact-zero loss at a given per-pair coverage than a binary
+  classification target, even though in-distribution *Spearman* stays above
+  0.977 throughout (i.e. the small residual in-distribution loss doesn't
+  correspond to getting pair orderings wrong, just to imperfect scale/
+  calibration on repeated pairs).
+- The transformer-probe (`distance`, 8-reference-averaged) metrics are
+  essentially flat across the whole sweep (cv R² 0.53-0.55, Spearman
+  0.27-0.30 at every K) despite the trained head's own held-out Spearman
+  moving from 0.40 to 0.54 - mirroring 106's observation that this probe
+  depends mainly on the frozen backbone's linear decodability rather than
+  tracking the newly-trained head's raw task performance point-for-point.
+
+**Bottom line: fine-tuning a distance head on top of a frozen, well-trained
+same_triangle embedding does *not* show the same "small point pool already
+gets you most of the way to full supervision" story that 106-115 found in
+the other direction.** Even at 12.5% of points (K=100), held-out Spearman
+recovers only about half the gap to full-800-point supervision, and the
+sweep's own trajectory is noisy rather than smoothly improving - consistent
+with 102's headline finding that this reverse transfer direction has a
+much lower ceiling to begin with, and extending it to show that ceiling is
+also *harder to approach* via small-pool supervision, not just lower in
+absolute terms.
+
+### 3. Next steps
+
+- Run a second seed for the point-pool permutation (mirroring 115's own
+  open question about K=20->30) to check whether this sweep's noisiness
+  (the K=30 and K=80 dips) is a one-seed artifact or a genuine property of
+  fine-tuning `distance` on this frozen backbone - the swings here are
+  larger relative to the sweep's own range than anything seen in 106-115,
+  so this is a higher priority than it was for the other direction.
+- Extend past K=100 (e.g. 150-800, matching 102's full-point run) to see
+  whether held-out Spearman eventually converges to 102's 0.779 ceiling
+  given enough points, or plateaus well short of it the way this sweep's
+  first 100 points already suggest.
+- Since held-out loss and held-out Spearman visibly decouple more here than
+  in 106-115 (e.g. 118 and 123, where they move in opposite directions),
+  it may be worth reporting a rank-based loss metric alongside raw
+  Smooth-L1 loss for this specific direction, rather than treating the two
+  as redundant signals the way 112/113 found them to be for the
+  same_triangle direction.
+
+---
+
+## 126 - Extended reverse point-pool sweep, point 1/16: K=50 points, 50000-step budget
+
+### 1. Model settings
+
+Direct follow-up on 125's own next steps: extends the 116-125 reverse
+(frozen same_triangle embedding -> fine-tuned distance head) sweep past
+K=100 up to the full K=800, in steps of 50, and switches from 116-125's
+20000-step budget to the full 50000-step budget 102 used for its
+unrestricted-supervision ceiling (held-out loss 0.00812, Spearman 0.77864).
+New configs `configs/distance_points_sweep_50k/octahedron_pts{K}_frozen_ft.yaml`
+for K in {50, 100, ..., 800}: identical to the 116-125 configs (`tasks:
+[distance]`, `init_checkpoint` pointed at the same
+`models/pretrained/octahedron_same_triangle_n800_50k.pt` checkpoint,
+`freeze: [emb, transformer]`, `finetune_pool_points: K`, `train_examples:
+50000`) except `training.steps: 50000` instead of 20000. K=800 uses the
+entire point set as its pool, so its training pairs are effectively
+unrestricted (minus the held-out 10%) - a natural end-of-sweep rerun of
+102 itself, serving as a built-in sanity check on this whole config family.
+
+### 2. Results / findings
+
+Result folder: `experiments/manifold_learning/octahedron/126/`
+
+K=50: 1090 eligible training pairs (of C(50,2)=1225) - identical point pool
+to 120 (same seeded permutation, task-independent).
+
+| metric | K=50 @20k steps (120) | K=50 @50k steps (126) |
+|---|---:|---:|
+| held-out loss / Spearman | 0.02775 / 0.47093 | 0.02362 / **0.48253** |
+| in-distribution loss / Spearman | 0.00013 / 0.99798 | 0.00000 / 0.99994 |
+
+- The frozen embedding-table sanity numbers still match 099/102 exactly
+  (cv R² 0.3403, Spearman 0.3165, NN recall 0.0100, intrinsic dim 16.0708),
+  confirming the shared checkpoint loaded correctly at this new step budget
+  too.
+- More than doubling the step budget at fixed K=50 buys a modest held-out
+  Spearman improvement (+0.012) and a real loss improvement (0.02775 ->
+  0.02362), plus in-distribution memorization tightens to an exact 0.0 loss
+  (vs. 120's small residual 0.00013) - a real but small step-budget effect
+  at this point-pool size, not the dramatic jump 010 found for `emb_dim=32`
+  going from 50000 to 100000 steps.
+
+### 3. Next steps
+
+- Continue through K=800; the real test of whether more steps mainly helps
+  or whether wider point pools matter more is in the shape of the K=100+
+  points, where 116-125's short-budget sweep stayed noisy and well below
+  102's ceiling.
+
+---
+
+## 127 - Extended reverse point-pool sweep, point 2/16: K=100 points
+
+### 1. Model settings
+
+Same as 126, `finetune_pool_points: 100`.
+
+### 2. Results / findings
+
+Result folder: `experiments/manifold_learning/octahedron/127/`
+
+K=100: 4441 eligible training pairs (of C(100,2)=4950).
+
+| metric | K=100 @20k steps (125) | K=100 @50k steps (127) |
+|---|---:|---:|
+| held-out loss / Spearman | 0.01985 / **0.54313** | 0.02281 / 0.52233 |
+| in-distribution loss / Spearman | 0.00105 / 0.97769 | 0.00036 / 0.99298 |
+
+- **Unlike K=50, more steps make held-out performance slightly *worse*
+  here**: Spearman drops (0.543 -> 0.522) and loss rises (0.01985 ->
+  0.02281), even though in-distribution memorization improves as expected
+  (loss 0.00105 -> 0.00036). Given 116-125 already showed this sweep is
+  noisy at this point-pool size (e.g. 118's K=30 dip), this could be a
+  single-seed fluctuation rather than a real "more steps hurts" effect -
+  worth keeping in mind rather than over-reading, but notably it's the
+  opposite direction from 126's K=50 result.
+
+### 3. Next steps
+
+- Continue the sweep; K=150 onward moves into point-pool territory 116-125
+  never reached, where any step-budget effect should become secondary to
+  the much larger pool-size effect.
+
+---
+
+## 128 - Extended reverse point-pool sweep, point 3/16: K=150 points
+
+### 1. Model settings
+
+Same as prior entries, `finetune_pool_points: 150`.
+
+### 2. Results / findings
+
+Result folder: `experiments/manifold_learning/octahedron/128/`
+
+K=150: 10044 eligible training pairs (of C(150,2)=11175).
+
+| metric | K=100 (127) | K=150 (128) |
+|---|---:|---:|
+| held-out loss / Spearman | 0.02281 / 0.52233 | 0.01975 / **0.55948** |
+| in-distribution loss / Spearman | 0.00036 / 0.99298 | 0.00136 / 0.97227 |
+
+- First point past 116-125's K=100 ceiling, and it already clears every
+  value that noisy 10-100 sweep ever reached (previous best was 125's
+  0.54313) - held-out Spearman climbs cleanly to 0.559, suggesting the
+  wider pool is now driving improvement more than the noise seen at
+  smaller K.
+- In-distribution loss keeps rising smoothly with pool width (0.00036 ->
+  0.00136) as expected with less per-pair repetition, while in-distribution
+  Spearman starts trending down (0.993 -> 0.972) for the first time in
+  this extended sweep - a genuinely wider, harder-to-memorize training
+  pool now, not just a slightly-imperfect-loss one.
+
+### 3. Next steps
+
+- Continue toward K=800; watch whether held-out Spearman keeps climbing
+  this cleanly or the noise seen at K<=100 reappears at any point.
+
+---
+
+## 129 - Extended reverse point-pool sweep, point 4/16: K=200 points
+
+### 1. Model settings
+
+Same as prior entries, `finetune_pool_points: 200`.
+
+### 2. Results / findings
+
+Result folder: `experiments/manifold_learning/octahedron/129/`
+
+K=200: 17907 eligible training pairs (of C(200,2)=19900).
+
+| metric | K=150 (128) | K=200 (129) |
+|---|---:|---:|
+| held-out loss / Spearman | 0.01975 / 0.55948 | 0.01848 / **0.60851** |
+| in-distribution loss / Spearman | 0.00136 / 0.97227 | 0.00232 / 0.94739 |
+
+- Held-out Spearman keeps climbing cleanly (+0.049), now solidly past every
+  116-125 value. The sweep looks qualitatively different from its own first
+  half: smooth and monotonic here, versus oscillating in the 10-100 range.
+
+### 3. Next steps
+
+- Continue toward K=800.
+
+---
+
+## 130 - Extended reverse point-pool sweep, point 5/16: K=250 points
+
+### 1. Model settings
+
+Same as prior entries, `finetune_pool_points: 250`.
+
+### 2. Results / findings
+
+Result folder: `experiments/manifold_learning/octahedron/130/`
+
+K=250: 27999 eligible training pairs (of C(250,2)=31125).
+
+| metric | K=200 (129) | K=250 (130) |
+|---|---:|---:|
+| held-out loss / Spearman | 0.01848 / 0.60851 | 0.01428 / **0.64310** |
+| in-distribution loss / Spearman | 0.00232 / 0.94739 | 0.00322 / 0.92252 |
+
+- Continued clean improvement (+0.035 Spearman, loss down sharply from
+  0.0185 to 0.0143) - held-out loss's rate of improvement is now
+  outpacing its earlier steps, similar in spirit to 106-115's observation
+  that loss can be the more sensitive metric at some points in a sweep.
+
+### 3. Next steps
+
+- Continue toward K=800; roughly a third of the way through by point count.
+
+---
+
+## 131 - Extended reverse point-pool sweep, point 6/16: K=300 points
+
+### 1. Model settings
+
+Same as prior entries, `finetune_pool_points: 300`.
+
+### 2. Results / findings
+
+Result folder: `experiments/manifold_learning/octahedron/131/`
+
+Result: 40377 eligible training pairs (of C(300,2)=44850).
+
+| metric | K=250 (130) | K=300 (131) |
+|---|---:|---:|
+| held-out loss / Spearman | 0.01428 / 0.64310 | 0.01264 / **0.67193** |
+| in-distribution loss / Spearman | 0.00322 / 0.92252 | 0.00408 / 0.90064 |
+
+- Still climbing smoothly (+0.029 Spearman); in-distribution Spearman has
+  now dropped below 0.90 for the first time, tracking the widening pool.
+
+### 3. Next steps
+
+- Continue toward K=800.
+
+---
+
+## 132 - Extended reverse point-pool sweep, point 7/16: K=350 points
+
+### 1. Model settings
+
+Same as prior entries, `finetune_pool_points: 350`.
+
+### 2. Results / findings
+
+Result folder: `experiments/manifold_learning/octahedron/132/`
+
+K=350: 55008 eligible training pairs (of C(350,2)=61075).
+
+| metric | K=300 (131) | K=350 (132) |
+|---|---:|---:|
+| held-out loss / Spearman | 0.01264 / 0.67193 | 0.01111 / **0.70453** |
+| in-distribution loss / Spearman | 0.00408 / 0.90064 | 0.00463 / 0.88331 |
+
+- Held-out Spearman crosses 0.70 for the first time (+0.033 over K=300) -
+  the midpoint of the full K=50-800 range by point count, and already
+  about 90% of the way from 126's K=50 starting value (0.483) to 102's
+  ceiling (0.779).
+
+### 3. Next steps
+
+- Continue toward K=800; growth so far looks like it may be decelerating
+  (per-step gains have been roughly stable in absolute terms rather than
+  accelerating), worth watching for a diminishing-returns knee in the back
+  half.
+
+---
+
+## 133 - Extended reverse point-pool sweep, point 8/16: K=400 points
+
+### 1. Model settings
+
+Same as prior entries, `finetune_pool_points: 400`.
+
+### 2. Results / findings
+
+Result folder: `experiments/manifold_learning/octahedron/133/`
+
+K=400: 71841 eligible training pairs (of C(400,2)=79800).
+
+| metric | K=350 (132) | K=400 (133) |
+|---|---:|---:|
+| held-out loss / Spearman | 0.01111 / 0.70453 | 0.01129 / **0.70223** |
+| in-distribution loss / Spearman | 0.00463 / 0.88331 | 0.00529 / 0.86667 |
+
+- **First non-monotonic point in the extended sweep:** held-out Spearman
+  dips very slightly (0.70453 -> 0.70223) and loss ticks up marginally
+  (0.01111 -> 0.01129) - a tiny wobble, far smaller in relative terms than
+  116-125's K=30/K=80 dips, right around the halfway point of the K range.
+  Consistent with 132's read that growth is decelerating here rather than
+  accelerating.
+
+### 3. Next steps
+
+- Continue toward K=800; confirm this is a one-point wobble and not the
+  start of a sustained plateau.
+
+---
+
+## 134 - Extended reverse point-pool sweep, point 9/16: K=450 points
+
+### 1. Model settings
+
+Same as prior entries, `finetune_pool_points: 450`.
+
+### 2. Results / findings
+
+Result folder: `experiments/manifold_learning/octahedron/134/`
+
+K=450: 90842 eligible training pairs (of C(450,2)=101025).
+
+| metric | K=400 (133) | K=450 (134) |
+|---|---:|---:|
+| held-out loss / Spearman | 0.01129 / 0.70223 | 0.01020 / **0.72356** |
+| in-distribution loss / Spearman | 0.00529 / 0.86667 | 0.00566 / 0.85509 |
+
+- 133's dip was a one-point wobble, not a plateau: held-out Spearman
+  resumes climbing (+0.021), continuing past K=350's value.
+
+### 3. Next steps
+
+- Continue toward K=800.
+
+---
+
+## 135 - Extended reverse point-pool sweep, point 10/16: K=500 points
+
+### 1. Model settings
+
+Same as prior entries, `finetune_pool_points: 500`.
+
+### 2. Results / findings
+
+Result folder: `experiments/manifold_learning/octahedron/135/`
+
+K=500: 112210 eligible training pairs (of C(500,2)=124750).
+
+| metric | K=450 (134) | K=500 (135) |
+|---|---:|---:|
+| held-out loss / Spearman | 0.01020 / 0.72356 | 0.00981 / **0.73793** |
+| in-distribution loss / Spearman | 0.00566 / 0.85509 | 0.00580 / 0.84925 |
+
+- Growth continues but the per-step increment keeps shrinking (+0.014
+  Spearman here vs. +0.021 at K=400->450 and +0.033 at K=300->350) - the
+  decelerating shape 132/133 anticipated is now clear and consistent
+  across several consecutive points.
+
+### 3. Next steps
+
+- Continue toward K=800; at this rate of deceleration, worth watching how
+  close held-out Spearman gets to 102's 0.779 ceiling by K=800 versus
+  plateauing noticeably short of it.
+
+---
+
+## 136 - Extended reverse point-pool sweep, point 11/16: K=550 points
+
+### 1. Model settings
+
+Same as prior entries, `finetune_pool_points: 550`.
+
+### 2. Results / findings
+
+Result folder: `experiments/manifold_learning/octahedron/136/`
+
+K=550: 135794 eligible training pairs (of C(550,2)=151525).
+
+| metric | K=500 (135) | K=550 (136) |
+|---|---:|---:|
+| held-out loss / Spearman | 0.00981 / 0.73793 | 0.00934 / **0.74383** |
+| in-distribution loss / Spearman | 0.00580 / 0.84925 | 0.00635 / 0.83247 |
+
+- Deceleration continues (+0.006 Spearman, the smallest single-step gain
+  yet) - the curve is visibly flattening into the back fifth of the sweep.
+
+### 3. Next steps
+
+- Continue toward K=800.
+
+---
+
+## 137 - Extended reverse point-pool sweep, point 12/16: K=600 points
+
+### 1. Model settings
+
+Same as prior entries, `finetune_pool_points: 600`.
+
+### 2. Results / findings
+
+Result folder: `experiments/manifold_learning/octahedron/137/`
+
+K=600: 161697 eligible training pairs (of C(600,2)=179700).
+
+| metric | K=550 (136) | K=600 (137) |
+|---|---:|---:|
+| held-out loss / Spearman | 0.00934 / 0.74383 | 0.00905 / **0.75288** |
+| in-distribution loss / Spearman | 0.00635 / 0.83247 | 0.00698 / 0.82166 |
+
+- Held-out Spearman ticks up again (+0.009), roughly in line with the last
+  few points - a slow, steady approach toward 102's ceiling rather than a
+  hard plateau.
+
+### 3. Next steps
+
+- Continue toward K=800.
+
+---
+
+## 138 - Extended reverse point-pool sweep, point 13/16: K=650 points
+
+### 1. Model settings
+
+Same as prior entries, `finetune_pool_points: 650`.
+
+### 2. Results / findings
+
+Result folder: `experiments/manifold_learning/octahedron/138/`
+
+K=650: 189758 eligible training pairs (of C(650,2)=210925).
+
+| metric | K=600 (137) | K=650 (138) |
+|---|---:|---:|
+| held-out loss / Spearman | 0.00905 / 0.75288 | 0.00869 / **0.75996** |
+| in-distribution loss / Spearman | 0.00698 / 0.82166 | 0.00720 / 0.81269 |
+
+- Continues the same slow, steady climb (+0.007 Spearman) seen since
+  K=500.
+
+### 3. Next steps
+
+- Continue toward K=800.
+
+---
+
+## 139 - Extended reverse point-pool sweep, point 14/16: K=700 points
+
+### 1. Model settings
+
+Same as prior entries, `finetune_pool_points: 700`.
+
+### 2. Results / findings
+
+Result folder: `experiments/manifold_learning/octahedron/139/`
+
+Result folder metrics: 220124 eligible training pairs (of C(700,2)=244650).
+
+| metric | K=650 (138) | K=700 (139) |
+|---|---:|---:|
+| held-out loss / Spearman | 0.00869 / 0.75996 | 0.00851 / **0.76682** |
+| in-distribution loss / Spearman | 0.00720 / 0.81269 | 0.00748 / 0.79688 |
+
+- Still the same slow, steady climb (+0.007 Spearman) - two points from
+  the end, held-out Spearman (0.767) is now within 0.012 of 102's 0.779
+  ceiling.
+
+### 3. Next steps
+
+- Continue to K=750, K=800; see 141 for the full 16-point table and
+  synthesis, including the K=800 sanity check against 102's own numbers.
+
+---
+
+## 140 - Extended reverse point-pool sweep, point 15/16: K=750 points
+
+### 1. Model settings
+
+Same as prior entries, `finetune_pool_points: 750`.
+
+### 2. Results / findings
+
+Result folder: `experiments/manifold_learning/octahedron/140/`
+
+K=750: 252749 eligible training pairs (of C(750,2)=280875).
+
+| metric | K=700 (139) | K=750 (140) |
+|---|---:|---:|
+| held-out loss / Spearman | 0.00851 / 0.76682 | 0.00825 / **0.77334** |
+| in-distribution loss / Spearman | 0.00720 / 0.80895 | 0.00748 / 0.79688 |
+
+- Held-out Spearman (0.773) is now within 0.005 of 102's 0.779 ceiling,
+  with one point left.
+
+### 3. Next steps
+
+- Run K=800 (the full point set, functionally unrestricted) and confirm it
+  reproduces 102's own numbers as a sanity check on this whole sweep - see
+  141.
+
+---
+
+## 141 - Extended reverse point-pool sweep, point 16/16: K=800 points (full set), and full sweep summary
+
+### 1. Model settings
+
+Same as prior entries, `finetune_pool_points: 800` - the full point set, so
+training pairs are effectively unrestricted (every pair is eligible except
+the 10% reserved as `test_pairs`). Functionally a rerun of 102's own
+config (`octahedron_distance_frozen_ft.yaml`, 800 points, 50000 steps, same
+`init_checkpoint`/`freeze`) with an explicit `finetune_pool_points: 800`
+instead of no restriction at all - included specifically as an end-of-sweep
+sanity check.
+
+### 2. Results / findings
+
+Result folder: `experiments/manifold_learning/octahedron/141/`
+
+K=800: 287640 eligible training pairs (= C(800,2) minus the held-out 10%,
+i.e. every non-test pair - no restriction in practice).
+
+| metric | 102 (unrestricted config) | 141 (finetune_pool_points=800) |
+|---|---:|---:|
+| held-out loss / Spearman | 0.00812 / 0.77864 | **0.00812 / 0.77864** |
+| in-distribution loss / Spearman | 0.00770 / 0.79293 | **0.00770 / 0.79293** |
+
+**K=800 reproduces 102's numbers exactly to displayed precision** -
+confirms `finetune_pool_points=800` on this 800-point manifold is
+identical in practice to no point-pool restriction at all, validating this
+entire sweep's methodology and giving the sweep's endpoint a hard,
+independently-established anchor rather than just its own K=750 neighbor.
+
+Full 16-point sweep at the 50000-step budget (frozen same_triangle
+embedding shared across every row; frozen embedding-table sanity check -
+cv R² 0.3403 ± 0.0229, Spearman 0.3165, NN recall 0.0100, intrinsic dim
+16.0708 - identical at every K, as in 116-125):
+
+| K (points) | eligible pairs | held-out loss | held-out Spearman | in-dist. loss | in-dist. Spearman |
+|---:|---:|---:|---:|---:|---:|
+| 50 | 1090 | 0.02362 | 0.48253 | 0.00000 | 0.99994 |
+| 100 | 4441 | 0.02281 | 0.52233 | 0.00036 | 0.99298 |
+| 150 | 10044 | 0.01975 | 0.55948 | 0.00136 | 0.97227 |
+| 200 | 17907 | 0.01848 | 0.60851 | 0.00232 | 0.94739 |
+| 250 | 27999 | 0.01428 | 0.64310 | 0.00322 | 0.92252 |
+| 300 | 40377 | 0.01264 | 0.67193 | 0.00408 | 0.90064 |
+| 350 | 55008 | 0.01111 | 0.70453 | 0.00463 | 0.88331 |
+| 400 | 71841 | 0.01129 | 0.70223 | 0.00529 | 0.86667 |
+| 450 | 90842 | 0.01020 | 0.72356 | 0.00566 | 0.85509 |
+| 500 | 112210 | 0.00981 | 0.73793 | 0.00580 | 0.84925 |
+| 550 | 135794 | 0.00934 | 0.74383 | 0.00635 | 0.83247 |
+| 600 | 161697 | 0.00905 | 0.75288 | 0.00681 | 0.82166 |
+| 650 | 189758 | 0.00869 | 0.75996 | 0.00698 | 0.81269 |
+| 700 | 220124 | 0.00851 | 0.76682 | 0.00720 | 0.80895 |
+| 750 | 252749 | 0.00825 | 0.77334 | 0.00748 | 0.79688 |
+| 800 | 287640 | **0.00812** | **0.77864** | 0.00770 | 0.79293 |
+
+**Headline: with the full 50000-step budget, held-out Spearman climbs
+smoothly and almost monotonically (one tiny K=350->400 wobble) all the way
+from 0.483 at K=50 to 0.779 at K=800 - fully closing the gap to 102's
+ceiling, unlike 116-125's noisy, only-half-closed 20000-step sweep over
+the much narrower K=10-100 range.** Concretely:
+
+- The held-out generalization gap (held-out loss minus in-distribution
+  loss, and the corresponding Spearman gap) **shrinks steadily as K grows**
+  rather than staying roughly constant: at K=50 the model perfectly
+  memorizes its 1090-pair pool (in-distribution loss 0.00000, Spearman
+  0.99994) while held-out performance is far behind (Spearman 0.483); by
+  K=800 the two have nearly converged (0.79293 vs. 0.77864) since there is
+  effectively no distinction between "training pool" and "the whole point
+  set" anymore. This is the same qualitative pattern 011-015/016/017 saw
+  for pair-level held-out splits, now shown to hold for point-level pool
+  restriction too.
+- Comparing to 116-125 at the two overlapping K values (50, 100) isolates
+  the step-budget effect cleanly: **the extra steps help at K=50 (+0.012
+  Spearman) but slightly hurt at K=100 (-0.021 Spearman)** - a small,
+  inconsistent effect at these narrow pools, dwarfed by the effect of
+  widening K itself once K exceeds 100 (each 50-point step from K=150
+  onward moves held-out Spearman by 0.01-0.05, an order of magnitude more
+  than the step-budget difference). This suggests 116-125's noisiness in
+  the K=10-100 range is mostly a small-pool-size effect, not a step-budget
+  artifact - more steps neither reliably fixes nor explains it.
+- Per-step gains in held-out Spearman **decelerate smoothly** across the
+  sweep: roughly +0.04-0.05 per 50-point step through K=150-350, down to
+  +0.006-0.01 per step from K=500 onward - a clean diminishing-returns
+  curve, unlike 116-125's oscillation. The same_triangle-direction sweep
+  (106-115) also decelerated in *absolute* accuracy terms toward its own
+  ceiling, but never showed anything as smooth as this curve, since it
+  started much closer to its ceiling already at K=10 (83% of ~98%).
+- The transformer-probe (`distance`, 8-reference-averaged) metrics stay
+  essentially flat across the entire 50-800 range (cv R² 0.53-0.55,
+  Spearman 0.28-0.29 at every K checked), exactly as in 116-125 - this
+  probe tracks the frozen backbone's own linear decodability, not the
+  fine-tuned head's task performance, so it is expected to be
+  K-independent regardless of how much the head itself improves.
+
+**Bottom line: this extended sweep resolves 125's open question decisively
+- given enough points (not just enough steps), fine-tuning a distance head
+on a frozen same_triangle embedding *does* eventually reach the same full-
+supervision ceiling 102 established (K=800 matches 102 exactly), it just
+needs far more point-pool coverage to get there than the same_triangle
+direction needed (106-115 reached ~95% of its ceiling by K=100/12.5% of
+points; this direction needs roughly K=700-750/87-94% of points to reach
+the equivalent ~98-99% of its own ceiling).** The two task directions'
+"how many points does the frozen-embedding-probe need" curves have
+fundamentally different shapes, not just different ceilings: same_triangle
+saturates fast and early, while distance-from-same_triangle-embedding
+requires point-pool coverage roughly proportional to the full dataset
+before it closes the gap.
+
+### 3. Next steps
+
+- The K=50-vs-K=100 step-budget crossover (126/127) is odd enough (small
+  positive effect at one K, small negative at the neighboring K) that it's
+  worth a second seed to check whether it's real or pure noise, though
+  given how much smaller it is than the K-driven effect from K=150 onward,
+  it's a low priority relative to the sweep's headline finding.
+- Now that both directions' full point-coverage curves exist (106-115+117-
+  125 for same_triangle, 116-125+126-141 for distance), a natural next
+  step is plotting both "fraction of points needed to reach X% of ceiling"
+  curves on the same axes to make the shape difference (fast-saturating
+  vs. proportional-to-coverage) directly visible, rather than only
+  described narratively as here.
+- Since intrinsic dimension/PCA/cv-R² sanity metrics on the frozen
+  embedding are confirmed identical at every K in both the 20000-step
+  (116-125) and 50000-step (126-141) sweeps, any future extension of this
+  family (e.g. a third step budget, or a second seed) could skip
+  re-verifying those and focus analysis time purely on the held-out
+  distance metrics that actually vary.
