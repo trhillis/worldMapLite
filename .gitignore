@@ -1,6 +1,6 @@
 models/
 .vscode/
 __pycache__/
+analysis_results/
+results/
 data/
-analysis/figures/*
-!analysis/figures/.gitkeep
