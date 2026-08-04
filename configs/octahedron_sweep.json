@@ -2,7 +2,7 @@
   "worlds": [
     {"world_type": "manifold", "manifold": "octahedron"}
   ],
-  "supervision_budgets": [78800],
+  "supervision_budgets": [1000, 2000, 3000, 5000, 10000],
   "model_seeds": [0, 1, 2, 3, 4],
   "fixed": {
     "world_seed": 0,
@@ -10,5 +10,18 @@
     "data_order_seed": 0,
     "eval_pairs": 1000,
     "steps": 5000
+  },
+  "learning_curves": {
+    "selected_budgets": [1000, 5000],
+    "checkpoints": [500, 1000, 2500, 5000]
+  },
+  "held_out_point_recovery": {
+    "selected_budgets": [5000],
+    "held_out_points": 20,
+    "held_out_point_seed": 0,
+    "anchor_counts": [3, 5, 10],
+    "steps": 200,
+    "learning_rate": 0.05,
+    "seed": 0
   }
 }
