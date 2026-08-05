@@ -70,6 +70,54 @@ for seed in 0 1 2; do
 done
 ```
 
+for seed in 0 1 2; do
+  for budget in 1000 2000 3000 5000 7500 10000; do
+    python src/train_multitask.py \
+      --world-type manifold \
+      --manifold torus \
+      --manifold-points 400 \
+      --distance-pairs "$budget" \
+      --eval-pairs 1000 \
+      --pair-split-seed 100 \
+      --world-seed 300 \
+      --data-order-seed 200 \
+      --seed "$seed" \
+      --steps 50000 \
+      --evaluation-checkpoints \
+        500 1000 2000 3000 5000 \
+        7500 10000 15000 20000 \
+        30000 40000 50000 \
+      --checkpoint-every 5000 \
+      --results-dir results \
+      2>&1 | tee "logs/mobius_pairs${budget}_seed${seed}.log"
+  done
+done
+
+mkdir -p logs results
+
+for seed in 0 1 2; do
+  for budget in 1000 2000 3000 5000 7500 10000; do
+    python src/train_multitask.py \
+      --world-type grid \
+      --manifold mobius \
+      --manifold-points 400 \
+      --distance-pairs "$budget" \
+      --eval-pairs 1000 \
+      --pair-split-seed 100 \
+      --world-seed 300 \
+      --data-order-seed 200 \
+      --seed "$seed" \
+      --steps 50000 \
+      --evaluation-checkpoints \
+        500 1000 2000 3000 5000 \
+        7500 10000 15000 20000 \
+        30000 40000 50000 \
+      --checkpoint-every 5000 \
+      --results-dir results \
+      2>&1 | tee "logs/mobius_pairs${budget}_seed${seed}.log"
+  done
+done
+
 Repeat the command for:
 
 * Grid

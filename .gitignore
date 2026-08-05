@@ -4,3 +4,8 @@ __pycache__/
 analysis_results/
 results/
 data/
+logs/
+received_data/
+logs_grid_but_says_mobius/
+run_recovery.sh
+train_octahedron.sh
