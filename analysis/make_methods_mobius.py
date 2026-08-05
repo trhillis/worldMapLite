@@ -26,6 +26,15 @@ OUTPUT = Path(
 rng = np.random.default_rng(SEED)
 
 
+BACKGROUND = "#344a9a"
+SURFACE = "#7f95d6"
+SURFACE_EDGE = "#b8c6f0"
+POINT_FILL = "#ffffff"
+POINT_EDGE = "#111827"
+PAIR_RED = "#ff1c1c"
+HIGHLIGHT = "#ffd84d"
+TEXT = "#ffffff"
+
 # ---------------------------------------------------------------------
 # Möbius geometry
 # ---------------------------------------------------------------------
@@ -272,7 +281,7 @@ def main() -> None:
 
     fig = plt.figure(
         figsize=(6.4, 4.8),
-        facecolor="white",
+        facecolor=BACKGROUND,
     )
 
     ax = fig.add_subplot(
@@ -280,7 +289,7 @@ def main() -> None:
         projection="3d",
     )
 
-    ax.set_facecolor("white")
+    ax.set_facecolor(BACKGROUND)
 
     # -----------------------------------------------------------------
     # Pale surface
@@ -324,8 +333,8 @@ def main() -> None:
         surface_x,
         surface_y,
         surface_z,
-        color="#b9ddf5",
-        alpha=0.45,
+        color=SURFACE,
+        alpha=0.7,
         linewidth=0,
         antialiased=True,
         shade=False,
@@ -341,8 +350,8 @@ def main() -> None:
         points[:, 1],
         points[:, 2],
         s=48,
-        facecolors="white",
-        edgecolors="#202020",
+        facecolors=POINT_FILL,
+        edgecolors=POINT_EDGE,
         linewidths=1.15,
         depthshade=False,
         zorder=5,
@@ -357,9 +366,9 @@ def main() -> None:
             [points[i, 0], points[j, 0]],
             [points[i, 1], points[j, 1]],
             [points[i, 2], points[j, 2]],
-            color="#d62728",
+            color=PAIR_RED,
             linewidth=2.2,
-            alpha=0.42,
+            alpha=1,
             solid_capstyle="round",
             zorder=3,
         )
@@ -383,7 +392,7 @@ def main() -> None:
             points[example_i, 2],
             points[example_j, 2],
         ],
-        color="#174cff",
+        color=HIGHLIGHT,
         linewidth=4.5,
         alpha=0.98,
         solid_capstyle="round",
@@ -405,7 +414,7 @@ def main() -> None:
         label_position[1],
         label_position[2],
         r"$d(i,j)$",
-        color="#174cff",
+        color=TEXT,
         fontsize=17,
         fontweight="bold",
         ha="center",
@@ -416,7 +425,7 @@ def main() -> None:
     # -----------------------------------------------------------------
     # Camera and export
     # -----------------------------------------------------------------
-
+    
     ax.view_init(
         elev=27,
         azim=-60,
@@ -440,7 +449,7 @@ def main() -> None:
         dpi=300,
         bbox_inches="tight",
         pad_inches=0.015,
-        facecolor="white",
+        facecolor=BACKGROUND,
         transparent=False,
     )
 

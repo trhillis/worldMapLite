@@ -14,6 +14,15 @@ SEED = 0
 
 random.seed(SEED)
 
+BACKGROUND = "#344a9a"
+SURFACE = "#7f95d6"
+SURFACE_EDGE = "#b8c6f0"
+POINT_FILL = "#ffffff"
+POINT_EDGE = "#111827"
+PAIR_RED = "#ff1c1c"
+HIGHLIGHT = "#ffd84d"
+TEXT = "#ffffff"
+
 # ------------------------------------------------------------------
 # Build grid
 # ------------------------------------------------------------------
@@ -36,14 +45,20 @@ pairs = random.sample(
 # Plot
 # ------------------------------------------------------------------
 
-fig, ax = plt.subplots(figsize=(5, 5))
+fig, ax = plt.subplots(
+    figsize=(5, 5),
+    facecolor=BACKGROUND,
+)
+
+ax.set_facecolor(BACKGROUND)
 
 # Grid edges
 nx.draw_networkx_edges(
     G,
     pos,
-    edge_color="lightgray",
-    width=1.5,
+    edge_color="#9aabe6",
+    width=1.7,
+    alpha=0.75,
     ax=ax,
 )
 
@@ -51,8 +66,8 @@ nx.draw_networkx_edges(
 nx.draw_networkx_nodes(
     G,
     pos,
-    node_color="white",
-    edgecolors="black",
+    node_color=POINT_FILL,
+    edgecolors=POINT_EDGE,
     node_size=90,
     linewidths=1.2,
     ax=ax,
@@ -63,7 +78,7 @@ for u, v in pairs:
     ax.plot(
         [pos[u][0], pos[v][0]],
         [pos[u][1], pos[v][1]],
-        color="red",
+        color=PAIR_RED,
         linewidth=2,
         alpha=0.65,
     )
@@ -74,7 +89,7 @@ u, v = pairs[0]
 ax.plot(
     [pos[u][0], pos[v][0]],
     [pos[u][1], pos[v][1]],
-    color="blue",
+    color=HIGHLIGHT,
     linewidth=3,
 )
 
@@ -85,7 +100,7 @@ ax.text(
     mx,
     my + 0.25,
     r"$d(i,j)$",
-    color="blue",
+    color=TEXT,
     fontsize=13,
     ha="center",
 )
@@ -103,9 +118,12 @@ Path("analysis_results/methods").mkdir(
 )
 
 plt.savefig(
-    "analysis_results/methods/grid_training_pairs.png",
+    "analysis_results/methods/grid_training_pairs_dark.png",
     dpi=300,
     bbox_inches="tight",
+    pad_inches=0.02,
+    facecolor=BACKGROUND,
+    transparent=False,
 )
 
 plt.close()

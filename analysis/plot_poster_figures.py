@@ -228,8 +228,11 @@ def plot_metric_vs_budget(
         handlelength=2.2,
     )
 
+    ax.yaxis.label.set_fontsize(15)
+    ax.yaxis.label.set_y(0.47)
+
     fig.subplots_adjust(
-        left=0.12,
+        left=0.16,
         right=0.985,
         bottom=0.16,
         top=0.98,
@@ -302,7 +305,7 @@ def plot_geometry_vs_generalization(
 
     finish_axis(
         ax,
-        xlabel="Embedding–geodesic Spearman correlation",
+        xlabel="Embedding–geodesic Spearman corr.",
         ylabel="Held-out pair $R^2$",
         title=None,
     )
@@ -728,7 +731,7 @@ def main() -> None:
         metric=geometry_metric,
         output=output_dir / "02_geometry_vs_budget.png",
         title="Geometric structure emerges with supervision",
-        ylabel="Embedding–geodesic Spearman correlation",
+        ylabel="Embedding–geodesic Spearman corr.",
     )
 
     plot_geometry_vs_generalization(
