@@ -39,6 +39,7 @@ pillow==12.3.0
 pluggy==1.6.0
 pygeodesic==0.1.11
 Pygments==2.20.0
+pynndescent==0.6.0
 pyparsing==3.3.2
 pytest==9.1.1
 python-dateutil==2.9.0.post0
@@ -53,3 +54,4 @@ torch-cka==0.21
 tqdm==4.68.4
 triton==3.7.1
 typing_extensions==4.16.0
+umap-learn==0.5.12
