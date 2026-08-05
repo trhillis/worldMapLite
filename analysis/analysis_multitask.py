@@ -1407,6 +1407,19 @@ def analyze_checkpoint(
         embeddings
     )
 
+    is_octahedron = world_name in {
+        "octahedron",
+        "regular_octahedron",
+    }
+
+    if is_octahedron:
+        embedding_pca_3d = PCA(
+            n_components=3
+        ).fit_transform(embeddings)
+
+        face_index = world.coordinates[:, 0].astype(int)
+        n_faces = world.manifold.n_faces
+
     linear_prediction, coordinate_r2 = (
         linear_coordinate_probe(
             embeddings,
@@ -1573,6 +1586,135 @@ def analyze_checkpoint(
     )
 
     plt.close()
+
+    if is_octahedron:
+        fig = plt.figure(
+            figsize=(8, 6)
+        )
+        ax = fig.add_subplot(
+            projection="3d"
+        )
+
+        scatter = ax.scatter(
+            embedding_pca_3d[:, 0],
+            embedding_pca_3d[:, 1],
+            embedding_pca_3d[:, 2],
+            c=face_index,
+            cmap="tab10",
+            vmin=-0.5,
+            vmax=n_faces - 0.5,
+            s=15,
+        )
+
+        ax.set_title(
+            f"{run_name}: embedding PCA (3D)"
+        )
+
+        ax.set_xlabel("PC1")
+        ax.set_ylabel("PC2")
+        ax.set_zlabel("PC3")
+
+        fig.colorbar(
+            scatter,
+            ax=ax,
+            ticks=range(n_faces),
+            label="octahedron face",
+        )
+
+        fig.savefig(
+            run_plot_dir
+            / "embedding_pca_3d.png",
+            dpi=150,
+            bbox_inches="tight",
+        )
+
+        plt.close(fig)
+
+        fig = plt.figure(
+            figsize=(8, 6)
+        )
+        ax = fig.add_subplot(
+            projection="3d"
+        )
+
+        scatter = ax.scatter(
+            linear_prediction[:, 0],
+            linear_prediction[:, 1],
+            linear_prediction[:, 2],
+            c=face_index,
+            cmap="tab10",
+            vmin=-0.5,
+            vmax=n_faces - 0.5,
+            s=15,
+        )
+
+        ax.set_title(
+            f"{run_name}: reconstructed "
+            f"{probe_target_name} (3D)"
+        )
+
+        ax.set_xlabel("X")
+        ax.set_ylabel("Y")
+        ax.set_zlabel("Z")
+
+        fig.colorbar(
+            scatter,
+            ax=ax,
+            ticks=range(n_faces),
+            label="octahedron face",
+        )
+
+        fig.savefig(
+            run_plot_dir
+            / "probe_reconstruction_3d.png",
+            dpi=150,
+            bbox_inches="tight",
+        )
+
+        plt.close(fig)
+
+        fig = plt.figure(
+            figsize=(8, 6)
+        )
+        ax = fig.add_subplot(
+            projection="3d"
+        )
+
+        scatter = ax.scatter(
+            probe_targets[:, 0],
+            probe_targets[:, 1],
+            probe_targets[:, 2],
+            c=face_index,
+            cmap="tab10",
+            vmin=-0.5,
+            vmax=n_faces - 0.5,
+            s=15,
+        )
+
+        ax.set_title(
+            f"{run_name}: true "
+            f"{probe_target_name} (3D)"
+        )
+
+        ax.set_xlabel("X")
+        ax.set_ylabel("Y")
+        ax.set_zlabel("Z")
+
+        fig.colorbar(
+            scatter,
+            ax=ax,
+            ticks=range(n_faces),
+            label="octahedron face",
+        )
+
+        fig.savefig(
+            run_plot_dir
+            / "true_targets_3d.png",
+            dpi=150,
+            bbox_inches="tight",
+        )
+
+        plt.close(fig)
 
     # ----------------------------------------------
     # Transformer representations
