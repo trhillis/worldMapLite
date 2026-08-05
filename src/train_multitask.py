@@ -226,6 +226,31 @@ def set_seed(seed):
         torch.cuda.manual_seed_all(seed)
 
 
+_true_distance_matrix_cache: dict[tuple, np.ndarray] = {}
+
+
+def _cached_true_distance_matrix(world):
+    """Memoize true_distance_matrix by world identity within this process.
+
+    Sweeps commonly reuse the exact same world across many runs (fixed
+    world_seed / held_out_point_seed), and for manifolds whose geodesics are
+    an unfolding search (e.g. the octahedron) this matrix costs an O(n^2)
+    per-pair computation - expensive enough that recomputing it fresh for
+    every run dominates a sweep's wall-clock time.
+    """
+
+    key = (
+        world.meta["type"],
+        world.manifold.name if world.manifold is not None else None,
+        np.asarray(world.coordinates).tobytes(),
+    )
+    cached = _true_distance_matrix_cache.get(key)
+    if cached is None:
+        cached = true_distance_matrix(world)
+        _true_distance_matrix_cache[key] = cached
+    return cached
+
+
 def infinite_loader(loader):
     """
     Repeatedly iterate over a DataLoader forever.
@@ -537,7 +562,7 @@ def main(cfg=None):
     # matrix is computed once here and reused at every evaluation checkpoint
     # instead of being recomputed - expensive for manifolds whose geodesics
     # are unfolding searches rather than a closed-form formula.
-    world_distance_matrix = true_distance_matrix(world)
+    world_distance_matrix = _cached_true_distance_matrix(world)
     # These are only necessary when training the nearest task.
     nearest_cache = None
     negative_cache = None
